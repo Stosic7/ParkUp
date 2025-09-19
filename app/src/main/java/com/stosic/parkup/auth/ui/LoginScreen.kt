@@ -3,9 +3,7 @@ package com.stosic.parkup.auth.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,82 +13,67 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview
 
 @Composable
-fun RegisterScreen(
-    onPickPhoto: () -> Unit,
-    onRegisterClick: (email: String, password: String, ime: String, prezime: String, telefon: String) -> Unit,
-    onBack: () -> Unit = {}
+fun LoginScreen(
+    onLoginClick: (email: String, password: String) -> Unit,
+    onForgotPassword: (email: String) -> Unit,
+    onNavigateToRegister: () -> Unit,
 ) {
-    // state
-    var ime by remember { mutableStateOf("") }
-    var prezime by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var telefon by remember { mutableStateOf("") }
-    var showPassword by remember { mutableStateOf(false) }
 
-    val canSubmit = ime.isNotBlank() &&
-            prezime.isNotBlank() &&
-            email.isNotBlank() &&
-            password.length >= 6 &&
-            telefon.isNotBlank()
+    val canSubmit = email.isNotBlank() && password.length >= 6
 
-    // paleta
-    val Yellow = Color(0xFF42A5F5)        // glavna žuta
-    val YellowField = Color(0xFF90CAF9)   // svetlija žuta za polja
-    val Dark = Color(0xFF2B2B2B)          // tamno siva / skoro crna
-    val Outline = Color(0xFFFFFFFF)       // border boja
+    // boje
+    val Blue = Color(0xFF42A5F5)
+    val BlueField = Color(0xFF90CAF9)
+    val Dark = Color(0xFF2B2B2B)
+    val Outline = Color(0xFFFFFFFF)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Yellow)
+            .background(Blue)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
+        // Logo gore levo
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 16.dp, top = 12.dp)
+                .size(56.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .border(2.dp, Outline, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("P", color = Dark, fontSize = 28.sp, fontWeight = FontWeight.Black)
+        }
+
+        // Glavni sadržaj
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(16.dp))
-
-            // Logo gore levo (P u kvadratu)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .border(2.dp, Outline, RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("P", color = Dark, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Kartica sa input poljima
+            // Kartica
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .border(2.dp, Outline, RoundedCornerShape(14.dp))
-                    .background(Yellow.copy(alpha = 0.0f))
-                    .padding(16.dp),
+                    .background(Blue.copy(alpha = 0f))
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "Sign Up",
+                    "Sign In",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Dark
@@ -98,33 +81,12 @@ fun RegisterScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // 👇 novi redosled
-                LabeledField(
-                    label = "Name",
-                    value = ime,
-                    onChange = { ime = it },
-                    placeholder = "Enter your name",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                LabeledField(
-                    label = "Last Name",
-                    value = prezime,
-                    onChange = { prezime = it },
-                    placeholder = "Enter your last name",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
                 LabeledField(
                     label = "Email",
                     value = email,
                     onChange = { email = it },
                     placeholder = "Enter email address",
-                    container = YellowField,
+                    container = BlueField,
                     outline = Outline,
                     textColor = Dark
                 )
@@ -134,32 +96,27 @@ fun RegisterScreen(
                     value = password,
                     onChange = { password = it },
                     placeholder = "Enter password",
-                    isPassword = !showPassword,
-                    container = YellowField,
+                    isPassword = true,
+                    container = BlueField,
                     outline = Outline,
                     textColor = Dark
                 )
 
-                LabeledField(
-                    label = "Phone Number",
-                    value = telefon,
-                    onChange = { telefon = it },
-                    placeholder = "Enter phone number",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
+                Spacer(Modifier.height(8.dp))
 
-                TextButton(onClick = onPickPhoto) {
-                    Text("Add photo (optional)", color = Dark)
+                TextButton(
+                    onClick = { onForgotPassword(email) },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Forgot password?", color = Outline)
                 }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Dugme Sign Up
+            // Dugme ispod kartice
             Button(
-                onClick = { onRegisterClick(email, password, ime, prezime, telefon) },
+                onClick = { onLoginClick(email, password) },
                 enabled = canSubmit,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF262626),
@@ -174,16 +131,15 @@ fun RegisterScreen(
                     .fillMaxWidth()
                     .height(56.dp)
             ) {
-                Text("Sign Up Now", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Log In", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
 
-            TextButton(onClick = onBack) {
-                Text("Have an account? Login.", color = Outline)
+            // Tekst ispod dugmeta
+            TextButton(onClick = onNavigateToRegister) {
+                Text("Don't have an account? Sign up.", color = Outline)
             }
-
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -227,10 +183,10 @@ private fun LabeledField(
 
 @Preview(showBackground = true)
 @Composable
-private fun RegisterScreenPreview() {
-    RegisterScreen(
-        onPickPhoto = {},
-        onRegisterClick = { _, _, _, _, _ -> },
-        onBack = {}
+private fun LoginScreenPreview() {
+    LoginScreen(
+        onLoginClick = { _, _ -> },
+        onForgotPassword = {},
+        onNavigateToRegister = {}
     )
 }
