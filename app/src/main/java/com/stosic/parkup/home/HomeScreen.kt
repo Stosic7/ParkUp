@@ -43,27 +43,15 @@ fun HomeScreen(
     userEmail: String,
     onLogout: () -> Unit
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("ParkUp") },
-                actions = {
-                    Button(onClick = onLogout) { Text("Logout") }
-                }
-            )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            MapboxMapView(
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        MapboxMapView(
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
+
 
 @Composable
 @Suppress("MissingPermission")

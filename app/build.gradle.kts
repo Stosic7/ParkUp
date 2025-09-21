@@ -51,6 +51,8 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation("androidx.compose.material:material-icons-extended:1.7.3")
 
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
     // Mapbox
     implementation("com.mapbox.maps:android:11.15.0")
 

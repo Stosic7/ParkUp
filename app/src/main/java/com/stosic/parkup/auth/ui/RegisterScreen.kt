@@ -1,5 +1,6 @@
 package com.stosic.parkup.auth.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -17,21 +18,17 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview
 
 @Composable
 fun RegisterScreen(
-    onPickPhoto: () -> Unit,
-    onRegisterClick: (email: String, password: String, ime: String, prezime: String, telefon: String) -> Unit,
+    onRegisterClick: (email: String, password: String, ime: String, prezime: String, telefon: String, photoUri: Uri?) -> Unit,
     onBack: () -> Unit = {}
 ) {
-    // state
     var ime by remember { mutableStateOf("") }
     var prezime by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
-    var showPassword by remember { mutableStateOf(false) }
 
     val canSubmit = ime.isNotBlank() &&
             prezime.isNotBlank() &&
@@ -39,16 +36,15 @@ fun RegisterScreen(
             password.length >= 6 &&
             telefon.isNotBlank()
 
-    // paleta
-    val Yellow = Color(0xFF42A5F5)        // glavna žuta
-    val YellowField = Color(0xFF90CAF9)   // svetlija žuta za polja
-    val Dark = Color(0xFF2B2B2B)          // tamno siva / skoro crna
-    val Outline = Color(0xFFFFFFFF)       // border boja
+    val Blue = Color(0xFF42A5F5)
+    val BlueField = Color(0xFF90CAF9)
+    val Dark = Color(0xFF2B2B2B)
+    val Outline = Color(0xFFFFFFFF)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Yellow)
+            .background(Blue)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
@@ -61,7 +57,7 @@ fun RegisterScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // Logo gore levo (P u kvadratu)
+            // logo
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Start
@@ -79,100 +75,32 @@ fun RegisterScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Kartica sa input poljima
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(2.dp, Outline, RoundedCornerShape(14.dp))
-                    .background(Yellow.copy(alpha = 0.0f))
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    "Sign Up",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Dark
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                // 👇 novi redosled
-                LabeledField(
-                    label = "Name",
-                    value = ime,
-                    onChange = { ime = it },
-                    placeholder = "Enter your name",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                LabeledField(
-                    label = "Last Name",
-                    value = prezime,
-                    onChange = { prezime = it },
-                    placeholder = "Enter your last name",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                LabeledField(
-                    label = "Email",
-                    value = email,
-                    onChange = { email = it },
-                    placeholder = "Enter email address",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                LabeledField(
-                    label = "Password",
-                    value = password,
-                    onChange = { password = it },
-                    placeholder = "Enter password",
-                    isPassword = !showPassword,
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                LabeledField(
-                    label = "Phone Number",
-                    value = telefon,
-                    onChange = { telefon = it },
-                    placeholder = "Enter phone number",
-                    container = YellowField,
-                    outline = Outline,
-                    textColor = Dark
-                )
-
-                TextButton(onClick = onPickPhoto) {
-                    Text("Add photo (optional)", color = Dark)
-                }
-            }
+            // umesto profilne slike samo naslov
+            Text(
+                "Sign Up",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White
+            )
 
             Spacer(Modifier.height(16.dp))
 
-            // Dugme Sign Up
+            // input polja
+            LabeledField("Name", ime, { ime = it }, "Enter your name", container = BlueField, outline = Outline, textColor = Dark)
+            LabeledField("Last Name", prezime, { prezime = it }, "Enter your last name", container = BlueField, outline = Outline, textColor = Dark)
+            LabeledField("Email", email, { email = it }, "Enter email address", container = BlueField, outline = Outline, textColor = Dark)
+            LabeledField("Password", password, { password = it }, "Enter password", isPassword = true, container = BlueField, outline = Outline, textColor = Dark)
+            LabeledField("Phone Number", telefon, { telefon = it }, "Enter phone number", container = BlueField, outline = Outline, textColor = Dark)
+
+            Spacer(Modifier.height(16.dp))
+
             Button(
-                onClick = { onRegisterClick(email, password, ime, prezime, telefon) },
+                onClick = { onRegisterClick(email, password, ime, prezime, telefon, null) }, // photoUri uvek null
                 enabled = canSubmit,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF262626),
-                    contentColor = Color.White
-                ),
-                elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = 10.dp,
-                    pressedElevation = 14.dp
-                ),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF262626), contentColor = Color.White),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 10.dp, pressedElevation = 14.dp),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
+                modifier = Modifier.fillMaxWidth().height(56.dp)
             ) {
                 Text("Sign Up Now", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
             }
@@ -205,9 +133,7 @@ private fun LabeledField(
         OutlinedTextField(
             value = value,
             onValueChange = onChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             placeholder = { Text(placeholder, color = outline.copy(alpha = 0.8f)) },
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             shape = RoundedCornerShape(10.dp),
@@ -223,14 +149,4 @@ private fun LabeledField(
         )
         Spacer(Modifier.height(10.dp))
     }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun RegisterScreenPreview() {
-    RegisterScreen(
-        onPickPhoto = {},
-        onRegisterClick = { _, _, _, _, _ -> },
-        onBack = {}
-    )
 }
