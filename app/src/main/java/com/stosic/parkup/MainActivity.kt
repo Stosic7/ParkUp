@@ -9,6 +9,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.stosic.parkup.auth.ui.LoginScreen
 import com.stosic.parkup.auth.ui.RegisterScreen
 import com.stosic.parkup.auth.ui.StartingScreen
+import com.stosic.parkup.home.HomeContent
 import com.stosic.parkup.ui.CustomPopup
 import com.stosic.parkup.home.HomeScreen
 
@@ -121,7 +122,7 @@ fun AuthHost() {
         }
 
         "home" -> {
-            HomeScreen(
+            HomeContent(
                 userEmail = auth.currentUser?.email ?: "Unknown",
                 onLogout = {
                     auth.signOut()
@@ -129,6 +130,5 @@ fun AuthHost() {
                 }
             )
         }
-
     }
 }
