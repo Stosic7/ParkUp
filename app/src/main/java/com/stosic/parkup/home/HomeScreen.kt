@@ -52,7 +52,6 @@ fun HomeScreen(
     }
 }
 
-
 @Composable
 @Suppress("MissingPermission")
 private fun MapboxMapView(modifier: Modifier = Modifier) {
@@ -60,7 +59,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
     val activity = context as? Activity
     var hasPermission by remember { mutableStateOf(hasLocationPermission(context)) }
 
-    // ==== Notifikacije ====
     val notificationChannelId = remember { "nearby_events" }
     val nm = remember(context) { NotificationManagerCompat.from(context) }
     val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -92,7 +90,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
         }
     }
 
-    // ==== Lokacione permisije ====
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -133,7 +130,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
         return
     }
 
-    // ==== Firebase refs ====
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
@@ -143,7 +139,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
 
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
     var lastSentMillis by remember { mutableStateOf(0L) }
-    val minSendIntervalMs = 10_000L // šalji na ~10s
+    val minSendIntervalMs = 10_000L
 
     var objects by remember { mutableStateOf(emptyList<NearbyItem>()) }
     var others by remember { mutableStateOf(emptyList<NearbyItem>()) }
@@ -152,6 +148,8 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
 
     var objectsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
     var othersReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+    var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
+    var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
 
     AndroidView(
         modifier = modifier,
@@ -170,7 +168,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                         }
                     }
 
-                    lateinit var positionListener: OnIndicatorPositionChangedListener
                     positionListener = OnIndicatorPositionChangedListener { point: Point ->
                         getMapboxMap().setCamera(
                             CameraOptions.Builder()
@@ -179,11 +176,11 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                                 .build()
                         )
                         lastUserPoint = point
-                        location.removeOnIndicatorPositionChangedListener(positionListener)
+                        location.removeOnIndicatorPositionChangedListener(positionListener!!)
                     }
-                    location.addOnIndicatorPositionChangedListener(positionListener)
+                    location.addOnIndicatorPositionChangedListener(positionListener!!)
 
-                    val trackingListener = OnIndicatorPositionChangedListener { point: Point ->
+                    trackingListener = OnIndicatorPositionChangedListener { point: Point ->
                         lastUserPoint = point
                         maybeSendLocation(db, uid, point, lastSentMillis, minSendIntervalMs) {
                             lastSentMillis = it
@@ -193,15 +190,14 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                             point, objects, others, proximityMeters, notifiedIds
                         )
                     }
-                    location.addOnIndicatorPositionChangedListener(trackingListener)
+                    location.addOnIndicatorPositionChangedListener(trackingListener!!)
                 }
             }
         }
     )
 
     // Firestore listeners
-    LaunchedEffect(uid) {
-        objectsReg?.remove()
+    DisposableEffect(uid) {
         objectsReg = db.collection("objects").addSnapshotListener { snap, _ ->
             val list = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
@@ -211,15 +207,8 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                 NearbyItem("obj:${d.id}", name, type, lat, lng)
             } ?: emptyList()
             objects = list
-            lastUserPoint?.let {
-                maybeNotifyNearby(
-                    context, nm, notificationChannelId, hasNotifPermission,
-                    it, objects, others, proximityMeters, notifiedIds
-                )
-            }
         }
 
-        othersReg?.remove()
         othersReg = db.collection("locations").addSnapshotListener { snap, _ ->
             val me = uid
             val list = snap?.documents?.mapNotNull { d ->
@@ -231,15 +220,15 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                 NearbyItem("usr:$otherUid", label, "user", lat, lng)
             } ?: emptyList()
             others = list
-            lastUserPoint?.let {
-                maybeNotifyNearby(
-                    context, nm, notificationChannelId, hasNotifPermission,
-                    it, objects, others, proximityMeters, notifiedIds
-                )
-            }
+        }
+
+        onDispose {
+            objectsReg?.remove(); objectsReg = null
+            othersReg?.remove(); othersReg = null
         }
     }
 
+    // Lifecycle cleanup
     DisposableEffect(lifecycle, mapView) {
         val observer = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) { mapView?.onStart() }
@@ -248,11 +237,19 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                 mapView?.onDestroy()
                 objectsReg?.remove(); objectsReg = null
                 othersReg?.remove(); othersReg = null
+                trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+                positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+                trackingListener = null
+                positionListener = null
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
+            trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+            positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+            trackingListener = null
+            positionListener = null
         }
     }
 }
@@ -348,7 +345,6 @@ private fun maybeNotifyNearby(
                     .setContentText(text)
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setDefaults(NotificationCompat.DEFAULT_ALL)
-                    .setFullScreenIntent(null, true)
                     .setAutoCancel(true)
                     .build()
 
@@ -356,9 +352,7 @@ private fun maybeNotifyNearby(
                         context,
                         Manifest.permission.POST_NOTIFICATIONS
                     ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    return
-                }
+                ) return
 
                 nm.notify(key.hashCode(), notif)
                 notifiedIds[key] = now

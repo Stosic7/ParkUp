@@ -31,23 +31,36 @@ fun AuthHost() {
     var screen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "start") }
     var message by remember { mutableStateOf<String?>(null) }
     var showDialog by remember { mutableStateOf(false) }
-
     var userData by remember { mutableStateOf<Map<String, String>?>(null) }
 
     if (showDialog && message != null) {
         CustomPopup(message = message!!, onDismiss = { showDialog = false })
     }
 
-    fun fetchUserData(uid: String) {
-        db.collection("users").document(uid).get()
-            .addOnSuccessListener { doc ->
-                userData = mapOf(
-                    "ime" to (doc.getString("ime") ?: ""),
-                    "prezime" to (doc.getString("prezime") ?: ""),
-                    "telefon" to (doc.getString("telefon") ?: ""),
-                    "email" to (doc.getString("email") ?: "")
-                )
-            }
+    // 📌 Centralni snapshot listener za user dokument
+    var userDocReg by remember { mutableStateOf<com.google.firebase.firestore.ListenerRegistration?>(null) }
+
+    DisposableEffect(auth.currentUser?.uid) {
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            userDocReg = db.collection("users").document(uid)
+                .addSnapshotListener { doc, _ ->
+                    if (doc != null && doc.exists()) {
+                        userData = mapOf(
+                            "ime" to (doc.getString("ime") ?: ""),
+                            "prezime" to (doc.getString("prezime") ?: ""),
+                            "telefon" to (doc.getString("telefon") ?: ""),
+                            "email" to (doc.getString("email") ?: ""),
+                            "photoUrl" to (doc.getString("photoUrl") ?: "")
+                        )
+                        println("userData updated: $userData")
+                    }
+                }
+        }
+        onDispose {
+            userDocReg?.remove()
+            userDocReg = null
+        }
     }
 
     when (screen) {
@@ -61,7 +74,6 @@ fun AuthHost() {
                 auth.signInWithEmailAndPassword(email, password)
                     .addOnCompleteListener { task ->
                         if (task.isSuccessful) {
-                            auth.currentUser?.uid?.let { fetchUserData(it) }
                             screen = "home"
                             message = "Login successful"
                             showDialog = true
@@ -110,12 +122,6 @@ fun AuthHost() {
 
                                 db.collection("users").document(uid).set(userDataMap)
                                     .addOnSuccessListener {
-                                        userData = mapOf(
-                                            "ime" to ime,
-                                            "prezime" to prezime,
-                                            "telefon" to telefon,
-                                            "email" to email
-                                        )
                                         screen = "home"
                                         message = "Registration successful"
                                         showDialog = true

@@ -40,42 +40,51 @@ fun ProfileScreen(
     val db = FirebaseFirestore.getInstance()
     val uid = FirebaseAuth.getInstance().currentUser?.uid
 
-    var ime by remember { mutableStateOf(userData?.get("ime") ?: "") }
-    var prezime by remember { mutableStateOf(userData?.get("prezime") ?: "") }
-    var telefon by remember { mutableStateOf(userData?.get("telefon") ?: "") }
-    var photoUrl by remember { mutableStateOf<String?>(null) }
-    var isUploading by remember { mutableStateOf(false) }
-    var localPreview by remember { mutableStateOf<Uri?>(null) } // 👈 preview lokalno
+    // stanja koja se pune iz userData
+    var ime by remember { mutableStateOf("") }
+    var prezime by remember { mutableStateOf("") }
+    var telefon by remember { mutableStateOf("") }
+    var photoUrl by remember { mutableStateOf("") }
 
-    // Moderni Photo Picker
+    // kad se userData promeni -> update stanja
+    LaunchedEffect(userData) {
+        ime = userData?.get("ime") ?: ""
+        prezime = userData?.get("prezime") ?: ""
+        telefon = userData?.get("telefon") ?: ""
+        photoUrl = userData?.get("photoUrl") ?: ""
+    }
+
+    var isUploading by remember { mutableStateOf(false) }
+    var localPreview by remember { mutableStateOf<Uri?>(null) }
+
+    // 📌 Photo picker
     val pickMedia = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null && uid != null) {
-            localPreview = uri // odmah prikaži preview
+            localPreview = uri
+            val storageRef = FirebaseStorage.getInstance()
+                .reference.child("profile_pictures/$uid.jpg")
 
-            val storageRef = FirebaseStorage.getInstance().reference.child("profile_pictures/$uid.jpg")
             isUploading = true
             storageRef.putFile(uri)
                 .addOnSuccessListener {
-                    storageRef.downloadUrl
-                        .addOnSuccessListener { url ->
-                            val freshUrl = url.toString() + "?t=${System.currentTimeMillis()}"
-                            db.collection("users").document(uid)
-                                .set(mapOf("photoUrl" to freshUrl), SetOptions.merge())
-                                .addOnSuccessListener {
-                                    photoUrl = freshUrl
-                                    isUploading = false
-                                }
-                                .addOnFailureListener {
-                                    it.printStackTrace()
-                                    isUploading = false
-                                }
-                        }
-                        .addOnFailureListener {
-                            it.printStackTrace()
-                            isUploading = false
-                        }
+                    storageRef.downloadUrl.addOnSuccessListener { url ->
+                        val freshUrl = url.toString() + "?t=${System.currentTimeMillis()}"
+                        db.collection("users").document(uid)
+                            .set(mapOf("photoUrl" to freshUrl), SetOptions.merge())
+                            .addOnSuccessListener {
+                                isUploading = false
+                                localPreview = null // reset preview -> povlači iz Firestore
+                            }
+                            .addOnFailureListener {
+                                it.printStackTrace()
+                                isUploading = false
+                            }
+                    }.addOnFailureListener {
+                        it.printStackTrace()
+                        isUploading = false
+                    }
                 }
                 .addOnFailureListener {
                     it.printStackTrace()
@@ -84,48 +93,56 @@ fun ProfileScreen(
         }
     }
 
-    // Real-time listener za podatke
-    LaunchedEffect(uid) {
-        if (uid != null) {
-            db.collection("users").document(uid)
-                .addSnapshotListener { snapshot, _ ->
-                    if (snapshot != null && snapshot.exists()) {
-                        ime = snapshot.getString("ime") ?: ""
-                        prezime = snapshot.getString("prezime") ?: ""
-                        telefon = snapshot.getString("telefon") ?: ""
-                        photoUrl = snapshot.getString("photoUrl")
-                    }
-                }
-        }
-    }
-
+    // UI
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
     ) {
         IconButton(onClick = onBack, modifier = Modifier.padding(bottom = 8.dp)) {
-            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Nazad", tint = Color(0xFF42A5F5))
+            Icon(
+                imageVector = Icons.Default.ArrowBack,
+                contentDescription = "Nazad",
+                tint = Color(0xFF42A5F5)
+            )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 24.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 24.dp)
+        ) {
             Box(
-                modifier = Modifier.size(96.dp).clip(CircleShape).background(Color(0xFF90CAF9))
-                    .clickable { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF90CAF9))
+                    .clickable {
+                        pickMedia.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    isUploading -> CircularProgressIndicator(color = Color.White, modifier = Modifier.size(32.dp))
+                    isUploading -> CircularProgressIndicator(
+                        color = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+
                     localPreview != null -> Image(
                         painter = rememberAsyncImagePainter(localPreview),
                         contentDescription = "Profilna slika",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    !photoUrl.isNullOrBlank() -> Image(
+
+                    photoUrl.isNotBlank() -> Image(
                         painter = rememberAsyncImagePainter(photoUrl),
                         contentDescription = "Profilna slika",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
+
                     else -> Icon(
                         imageVector = Icons.Default.Person,
                         contentDescription = "Profilna slika",
@@ -134,24 +151,49 @@ fun ProfileScreen(
                     )
                 }
             }
+
             Spacer(Modifier.width(16.dp))
+
             Column {
-                Text(text = "$ime $prezime", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                Text(
+                    text = "$ime $prezime",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black
+                )
                 if (telefon.isNotBlank()) {
-                    Text(text = "Telefon: $telefon", fontSize = 16.sp, color = Color.Gray)
+                    Text(
+                        text = "Telefon: $telefon",
+                        fontSize = 16.sp,
+                        color = Color.Gray
+                    )
                 }
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
-            Icon(imageVector = Icons.Default.Email, contentDescription = "Email", tint = Color(0xFF42A5F5))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Email,
+                contentDescription = "Email",
+                tint = Color(0xFF42A5F5)
+            )
             Spacer(Modifier.width(8.dp))
             Text(userEmail, fontSize = 16.sp)
         }
 
         if (telefon.isNotBlank()) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 24.dp)) {
-                Icon(imageVector = Icons.Default.Phone, contentDescription = "Telefon", tint = Color(0xFF42A5F5))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Phone,
+                    contentDescription = "Telefon",
+                    tint = Color(0xFF42A5F5)
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(telefon, fontSize = 16.sp)
             }
@@ -161,8 +203,13 @@ fun ProfileScreen(
 
         Button(
             onClick = onLogout,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5), contentColor = Color.White),
-            modifier = Modifier.fillMaxWidth().height(52.dp)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF42A5F5),
+                contentColor = Color.White
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
         ) {
             Text("Logout", fontSize = 18.sp)
         }
