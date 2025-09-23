@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,20 +14,23 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stosic.parkup.parking.ui.AddParkingFab
+import com.stosic.parkup.parking.ui.AddParkingDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeContent(
     userEmail: String,
-    userData: Map<String, String>?, // 👈 dodato
+    userData: Map<String, String>?,
     onLogout: () -> Unit
 ) {
     var showProfile by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
 
     if (showProfile) {
         ProfileScreen(
             userEmail = userEmail,
-            userData = userData, // 👈 prosleđeno
+            userData = userData,
             onBack = { showProfile = false },
             onLogout = onLogout
         )
@@ -84,19 +86,12 @@ fun HomeContent(
                     onLogout = onLogout
                 )
 
-                FloatingActionButton(
-                    onClick = { /* TODO: Dodaj novo parking mesto */ },
-                    containerColor = Color(0xFF42A5F5),
-                    contentColor = Color.White,
+                AddParkingFab(
+                    onClicked = { showAddDialog = true },
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(16.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Dodaj parking mesto"
-                    )
-                }
+                )
 
                 FloatingActionButton(
                     onClick = { /* TODO: Filter opcije */ },
@@ -109,6 +104,13 @@ fun HomeContent(
                     Icon(
                         imageVector = Icons.Filled.FilterList,
                         contentDescription = "Filter"
+                    )
+                }
+
+                if (showAddDialog) {
+                    AddParkingDialog(
+                        onDismiss = { showAddDialog = false },
+                        onSaved = { showAddDialog = false /* TODO: popup "Parking dodat (+10p)" */ }
                     )
                 }
             }

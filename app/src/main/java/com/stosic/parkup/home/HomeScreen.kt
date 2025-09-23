@@ -157,6 +157,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             MapView(ctx).apply {
                 mapView = this
                 getMapboxMap().loadStyleUri(Style.MAPBOX_STREETS) {
+                    com.stosic.parkup.parking.map.MapboxParkingOverlay.install(this)
                     if (hasLocationPermission(context)) {
                         try {
                             location.updateSettings {
@@ -195,6 +196,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             }
         }
     )
+    com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
 
     // Firestore listeners
     DisposableEffect(uid) {

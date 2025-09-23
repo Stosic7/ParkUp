@@ -17,9 +17,7 @@ import com.stosic.parkup.ui.CustomPopup
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            AuthHost()
-        }
+        setContent { AuthHost() }
     }
 }
 
@@ -31,13 +29,12 @@ fun AuthHost() {
     var screen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "start") }
     var message by remember { mutableStateOf<String?>(null) }
     var showDialog by remember { mutableStateOf(false) }
-    var userData by remember { mutableStateOf<Map<String, String>?>(null) }
+    var userData by remember { mutableStateOf<Map<String, Any>?>(null) }
 
     if (showDialog && message != null) {
         CustomPopup(message = message!!, onDismiss = { showDialog = false })
     }
 
-    // 📌 Centralni snapshot listener za user dokument
     var userDocReg by remember { mutableStateOf<com.google.firebase.firestore.ListenerRegistration?>(null) }
 
     DisposableEffect(auth.currentUser?.uid) {
@@ -51,16 +48,16 @@ fun AuthHost() {
                             "prezime" to (doc.getString("prezime") ?: ""),
                             "telefon" to (doc.getString("telefon") ?: ""),
                             "email" to (doc.getString("email") ?: ""),
-                            "photoUrl" to (doc.getString("photoUrl") ?: "")
+                            "photoUrl" to (doc.getString("photoUrl") ?: ""),
+                            "bio" to (doc.getString("bio") ?: ""),
+                            "points" to (doc.getLong("points") ?: 0L),
+                            "rank" to (doc.getLong("rank") ?: 0L)
                         )
                         println("userData updated: $userData")
                     }
                 }
         }
-        onDispose {
-            userDocReg?.remove()
-            userDocReg = null
-        }
+        onDispose { userDocReg?.remove(); userDocReg = null }
     }
 
     when (screen) {
@@ -68,44 +65,30 @@ fun AuthHost() {
             onLoginClick = { screen = "login" },
             onRegisterClick = { screen = "register" }
         )
-
         "login" -> LoginScreen(
             onLoginClick = { email, password ->
                 auth.signInWithEmailAndPassword(email, password)
                     .addOnCompleteListener { task ->
                         if (task.isSuccessful) {
-                            screen = "home"
-                            message = "Login successful"
-                            showDialog = true
+                            screen = "home"; message = "Login successful"
                         } else {
                             message = "Login failed: ${task.exception?.message}"
-                            showDialog = true
                         }
+                        showDialog = true
                     }
             },
             onForgotPassword = { email ->
                 if (email.isNotBlank()) {
                     auth.sendPasswordResetEmail(email)
                         .addOnCompleteListener { task ->
-                            message = if (task.isSuccessful) {
-                                "Reset link sent to $email"
-                            } else {
-                                "Failed to send reset link: ${task.exception?.message}"
-                            }
+                            message = if (task.isSuccessful) "Reset link sent to $email"
+                            else "Failed to send reset link: ${task.exception?.message}"
                             showDialog = true
                         }
-                } else {
-                    message = "Enter your email first!"
-                    showDialog = true
-                }
+                } else { message = "Enter your email first!"; showDialog = true }
             },
-            onNavigateToRegister = {
-                screen = "register"
-                message = null
-                showDialog = false
-            }
+            onNavigateToRegister = { screen = "register"; message = null; showDialog = false }
         )
-
         "register" -> RegisterScreen(
             onRegisterClick = { email, pass, ime, prezime, telefon, photoUri ->
                 auth.createUserWithEmailAndPassword(email, pass)
@@ -117,15 +100,16 @@ fun AuthHost() {
                                     "ime" to ime,
                                     "prezime" to prezime,
                                     "telefon" to telefon,
-                                    "email" to email
+                                    "email" to email,
+                                    "bio" to "",
+                                    "points" to 0L,
+                                    "rank" to 0L
                                 )
-
                                 db.collection("users").document(uid).set(userDataMap)
                                     .addOnSuccessListener {
                                         screen = "home"
                                         message = "Registration successful"
                                         showDialog = true
-
                                         if (photoUri != null) {
                                             val storageRef = FirebaseStorage.getInstance()
                                                 .reference.child("profile_pictures/$uid.jpg")
@@ -150,21 +134,12 @@ fun AuthHost() {
                         }
                     }
             },
-            onBack = {
-                screen = "login"
-                message = null
-                showDialog = false
-            }
+            onBack = { screen = "login"; message = null; showDialog = false }
         )
-
         "home" -> HomeContent(
             userEmail = auth.currentUser?.email ?: "Unknown",
-            userData = userData,
-            onLogout = {
-                auth.signOut()
-                screen = "start"
-                userData = null
-            }
+            userData = userData?.mapValues { it.value.toString() },
+            onLogout = { auth.signOut(); screen = "start"; userData = null }
         )
     }
 }
