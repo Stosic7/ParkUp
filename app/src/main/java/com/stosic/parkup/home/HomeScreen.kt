@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -36,6 +37,8 @@ import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
 import kotlin.math.*
+import com.stosic.parkup.parking.ui.AddParkingFab
+import com.stosic.parkup.parking.ui.AddParkingDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,11 +46,25 @@ fun HomeScreen(
     userEmail: String,
     onLogout: () -> Unit
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    var showAdd by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
         MapboxMapView(
             modifier = Modifier.fillMaxSize()
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, bottom = 16.dp)
+                .zIndex(10f),
+            contentAlignment = Alignment.BottomStart
+        ) {
+            AddParkingFab(onClicked = { showAdd = true })
+        }
+    }
+    if (showAdd) {
+        AddParkingDialog(
+            onDismiss = { showAdd = false },
+            onSaved = { showAdd = false }
         )
     }
 }
@@ -58,7 +75,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = context as? Activity
     var hasPermission by remember { mutableStateOf(hasLocationPermission(context)) }
-
     val notificationChannelId = remember { "nearby_events" }
     val nm = remember(context) { NotificationManagerCompat.from(context) }
     val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -74,7 +90,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             hasNotifPermission = granted
         }
     } else null
-
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
@@ -89,7 +104,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             notifPermissionLauncher?.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -97,7 +111,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) ||
                     (result[Manifest.permission.ACCESS_COARSE_LOCATION] == true)
     }
-
     LaunchedEffect(Unit) {
         if (!hasPermission) {
             permissionLauncher.launch(
@@ -108,7 +121,6 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             )
         }
     }
-
     if (!hasPermission) {
         PermissionRationale(
             onRequest = {
@@ -129,25 +141,18 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
         )
         return
     }
-
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
-
     var mapView: MapView? by remember { mutableStateOf(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
     var lastSentMillis by remember { mutableStateOf(0L) }
     val minSendIntervalMs = 10_000L
-
-    var objects by remember { mutableStateOf(emptyList<NearbyItem>()) }
-    var others by remember { mutableStateOf(emptyList<NearbyItem>()) }
+    var parkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
     val proximityMeters = 150.0
     val notifiedIds = remember { mutableStateMapOf<String, Long>() }
-
-    var objectsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
-    var othersReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+    var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
     var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
 
@@ -164,11 +169,8 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                                 enabled = true
                                 pulsingEnabled = true
                             }
-                        } catch (se: SecurityException) {
-                            se.printStackTrace()
-                        }
+                        } catch (_: SecurityException) { }
                     }
-
                     positionListener = OnIndicatorPositionChangedListener { point: Point ->
                         getMapboxMap().setCamera(
                             CameraOptions.Builder()
@@ -180,15 +182,14 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                         location.removeOnIndicatorPositionChangedListener(positionListener!!)
                     }
                     location.addOnIndicatorPositionChangedListener(positionListener!!)
-
                     trackingListener = OnIndicatorPositionChangedListener { point: Point ->
                         lastUserPoint = point
                         maybeSendLocation(db, uid, point, lastSentMillis, minSendIntervalMs) {
                             lastSentMillis = it
                         }
-                        maybeNotifyNearby(
+                        maybeNotifyNearbyParkings(
                             context, nm, notificationChannelId, hasNotifPermission,
-                            point, objects, others, proximityMeters, notifiedIds
+                            point, parkings, proximityMeters, notifiedIds
                         )
                     }
                     location.addOnIndicatorPositionChangedListener(trackingListener!!)
@@ -196,53 +197,51 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             }
         }
     )
-    com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
 
-    // Firestore listeners
     DisposableEffect(uid) {
-        objectsReg = db.collection("objects").addSnapshotListener { snap, _ ->
+        parkingsReg = db.collection("parkings").addSnapshotListener { snap, _ ->
             val list = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
                 val lng = d.getDouble("lng") ?: return@mapNotNull null
-                val name = d.getString("name") ?: "Objekat"
-                val type = d.getString("type") ?: "object"
-                NearbyItem("obj:${d.id}", name, type, lat, lng)
+                val title = d.getString("title") ?: "Parking"
+                val createdBy = d.getString("createdBy") ?: ""
+                val availableSlots = (d.getLong("availableSlots") ?: 0L)
+                NearbyParking(
+                    id = d.id,
+                    title = title,
+                    lat = lat,
+                    lng = lng,
+                    createdBy = createdBy,
+                    available = availableSlots
+                )
             } ?: emptyList()
-            objects = list
+            parkings = list
         }
-
-        othersReg = db.collection("locations").addSnapshotListener { snap, _ ->
-            val me = uid
-            val list = snap?.documents?.mapNotNull { d ->
-                val otherUid = d.id
-                if (otherUid == null || otherUid == me) return@mapNotNull null
-                val lat = d.getDouble("lat") ?: return@mapNotNull null
-                val lng = d.getDouble("lng") ?: return@mapNotNull null
-                val label = d.getString("email") ?: "Korisnik"
-                NearbyItem("usr:$otherUid", label, "user", lat, lng)
-            } ?: emptyList()
-            others = list
-        }
-
         onDispose {
-            objectsReg?.remove(); objectsReg = null
-            othersReg?.remove(); othersReg = null
+            parkingsReg?.remove(); parkingsReg = null
         }
     }
 
-    // Lifecycle cleanup
+    LaunchedEffect(parkings, lastUserPoint) {
+        val p = lastUserPoint ?: return@LaunchedEffect
+        maybeNotifyNearbyParkings(
+            context, nm, notificationChannelId, hasNotifPermission,
+            p, parkings, proximityMeters, notifiedIds
+        )
+    }
+
     DisposableEffect(lifecycle, mapView) {
         val observer = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) { mapView?.onStart() }
             override fun onStop(owner: LifecycleOwner) { mapView?.onStop() }
             override fun onDestroy(owner: LifecycleOwner) {
                 mapView?.onDestroy()
-                objectsReg?.remove(); objectsReg = null
-                othersReg?.remove(); othersReg = null
+                parkingsReg?.remove(); parkingsReg = null
                 trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
                 positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
                 trackingListener = null
                 positionListener = null
+                com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
             }
         }
         lifecycle.addObserver(observer)
@@ -252,11 +251,10 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
             trackingListener = null
             positionListener = null
+            com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
         }
     }
 }
-
-// ——— Helpers ———
 
 private fun hasLocationPermission(context: Context): Boolean {
     val fine = ContextCompat.checkSelfPermission(
@@ -289,12 +287,13 @@ private fun PermissionRationale(
     }
 }
 
-private data class NearbyItem(
+private data class NearbyParking(
     val id: String,
-    val name: String,
-    val type: String,
+    val title: String,
     val lat: Double,
-    val lng: Double
+    val lng: Double,
+    val createdBy: String,
+    val available: Long
 )
 
 private fun maybeSendLocation(
@@ -308,7 +307,6 @@ private fun maybeSendLocation(
     if (uid == null) return
     val now = System.currentTimeMillis()
     if (now - lastSentMillis < minIntervalMs) return
-
     val data = hashMapOf(
         "lat" to point.latitude(),
         "lng" to point.longitude(),
@@ -319,28 +317,27 @@ private fun maybeSendLocation(
         .addOnSuccessListener { onSent(now) }
 }
 
-private fun maybeNotifyNearby(
+private fun maybeNotifyNearbyParkings(
     context: Context,
     nm: NotificationManagerCompat,
     channelId: String,
     hasNotifPermission: Boolean,
     me: Point,
-    objects: List<NearbyItem>,
-    others: List<NearbyItem>,
+    parkings: List<NearbyParking>,
     thresholdMeters: Double,
     notifiedIds: MutableMap<String, Long>,
 ) {
     if (!hasNotifPermission) return
     val now = System.currentTimeMillis()
-
-    fun consider(item: NearbyItem) {
-        val dist = distanceMeters(me.latitude(), me.longitude(), item.lat, item.lng)
+    parkings.forEach { p ->
+        if (p.available <= 0L) return@forEach
+        val dist = distanceMeters(me.latitude(), me.longitude(), p.lat, p.lng)
         if (dist <= thresholdMeters) {
-            val key = "${item.type}:${item.id}"
+            val key = "parking:${p.id}"
             val last = notifiedIds[key] ?: 0L
             if (now - last >= 120_000L) {
-                val title = if (item.type == "user") "Korisnik u blizini" else "Objekat u blizini"
-                val text = "${item.name} (~${dist.roundToInt()} m)"
+                val title = "Parking u blizini"
+                val text = "${p.title} (~${dist.roundToInt()} m)"
                 val notif = NotificationCompat.Builder(context, channelId)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle(title)
@@ -349,21 +346,16 @@ private fun maybeNotifyNearby(
                     .setDefaults(NotificationCompat.DEFAULT_ALL)
                     .setAutoCancel(true)
                     .build()
-
                 if (ContextCompat.checkSelfPermission(
                         context,
                         Manifest.permission.POST_NOTIFICATIONS
                     ) != PackageManager.PERMISSION_GRANTED
                 ) return
-
                 nm.notify(key.hashCode(), notif)
                 notifiedIds[key] = now
             }
         }
     }
-
-    objects.forEach(::consider)
-    others.forEach(::consider)
 }
 
 private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
