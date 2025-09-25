@@ -7,11 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -29,7 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stosic.parkup.leaderboard.LeaderboardScreen
 import kotlinx.coroutines.delay
@@ -115,20 +112,11 @@ fun HomeContent(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // >>> NEMA spoljnog FAB-a ovde (onaj je SCREENSKI i ugrađen u HomeScreen)
             HomeScreen(
                 userEmail = userEmail,
                 onLogout = onLogout
             )
-            FloatingActionButton(
-                onClick = { },
-                containerColor = Color(0xFF42A5F5),
-                contentColor = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-            ) {
-                Icon(imageVector = Icons.Filled.FilterList, contentDescription = "Filter")
-            }
         }
     }
 }

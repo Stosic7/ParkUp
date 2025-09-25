@@ -12,13 +12,19 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -34,11 +40,22 @@ import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
+import com.mapbox.maps.plugin.gestures.OnMapClickListener
+import com.mapbox.maps.plugin.gestures.addOnMapClickListener
+import com.mapbox.maps.plugin.gestures.removeOnMapClickListener
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
-import kotlin.math.*
 import com.stosic.parkup.parking.ui.AddParkingFab
 import com.stosic.parkup.parking.ui.AddParkingDialog
+import com.stosic.parkup.parking.ui.ParkingDetailsScreen
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,35 +63,175 @@ fun HomeScreen(
     userEmail: String,
     onLogout: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+
     var showAdd by remember { mutableStateOf(false) }
+
+    var selected by remember { mutableStateOf<NearbyParking?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
+
+    var reserved by remember { mutableStateOf<NearbyParking?>(null) }
+    var reservedDistanceMeters by remember { mutableStateOf<Double?>(null) }
+    var lastUserPoint by remember { mutableStateOf<Point?>(null) }
+
     Box(Modifier.fillMaxSize()) {
         MapboxMapView(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            onUserPoint = { p -> lastUserPoint = p },
+            onParkingTapped = { p -> selected = p },
+            onDistanceUpdateForReserved = { meters -> reservedDistanceMeters = meters },
+            reservedSpot = reserved
         )
-        Box(
+
+        // ADD FAB
+        AnimatedVisibility(
+            visible = !showDetails,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(start = 16.dp, bottom = 16.dp)
-                .zIndex(10f),
-            contentAlignment = Alignment.BottomStart
+                .zIndex(20f)
         ) {
-            AddParkingFab(onClicked = { showAdd = true })
+            Box(contentAlignment = Alignment.BottomStart, modifier = Modifier.fillMaxSize()) {
+                AddParkingFab(onClicked = { showAdd = true })
+            }
+        }
+
+        // FILTER FAB
+        AnimatedVisibility(
+            visible = !showDetails,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 16.dp, bottom = 16.dp)
+                .zIndex(20f)
+        ) {
+            Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
+                FloatingActionButton(onClick = { /* filter kasnije */ }) {
+                    Icon(Icons.Filled.FilterList, contentDescription = "Filter")
+                }
+            }
+        }
+
+        // Bubble pre detalja (BEZ !!)
+        AnimatedVisibility(
+            visible = selected != null && !showDetails && reserved == null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 12.dp)
+                .padding(bottom = 128.dp)
+                .zIndex(12f)
+        ) {
+            val sp = selected ?: return@AnimatedVisibility
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.White,
+                shape = MaterialTheme.shapes.large,
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(sp.title.ifBlank { "Parking" }, fontWeight = FontWeight.Bold)
+                    val now = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    Text("Vreme: $now", color = Color(0xFF546E7A))
+                    val cap = if (sp.capacity != null) "${sp.available}/${sp.capacity}" else "${sp.available}"
+                    Text("Slobodno: $cap", color = Color(0xFF546E7A))
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = { showDetails = true }) { Text("Detalji") }
+                }
+            }
+        }
+
+        // Baner nakon rezervacije (BEZ !!)
+        AnimatedVisibility(
+            visible = reserved != null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp)
+                .zIndex(15f)
+        ) {
+            val sp = reserved ?: return@AnimatedVisibility
+            val meters = reservedDistanceMeters
+            val distLabel = meters?.let { if (it < 1000) "${it.roundToInt()} m" else String.format("%.1f km", it / 1000.0) } ?: "—"
+            Surface(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp)
+                    .fillMaxWidth(),
+                color = Color.White,
+                shape = MaterialTheme.shapes.large,
+                tonalElevation = 6.dp,
+                shadowElevation = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Rezervacija u toku", color = Color(0xFF42A5F5), fontWeight = FontWeight.SemiBold)
+                        Text(sp.title.ifBlank { "Parking" }, fontWeight = FontWeight.Bold)
+                        Text("Udaljenost: $distLabel", color = Color(0xFF546E7A))
+                    }
+                    TextButton(onClick = { selected = sp; showDetails = true }) { Text("DETALJI") }
+                }
+            }
         }
     }
+
     if (showAdd) {
         AddParkingDialog(
             onDismiss = { showAdd = false },
             onSaved = { showAdd = false }
         )
     }
+
+    // Detalji: rezervacija i otkazivanje se obavljaju u kartici
+    if (showDetails && selected != null) {
+        ParkingDetailsScreen(
+            parkingId = selected!!.id,
+            parkingTitle = selected!!.title.ifBlank { "Parking" },
+            onBack = { showDetails = false },
+            onReserved = {
+                val justReserved = selected
+                showDetails = false
+                selected = null
+                reserved = justReserved
+                lastUserPoint?.let { p ->
+                    justReserved?.let { r ->
+                        reservedDistanceMeters = distanceMeters(p.latitude(), p.longitude(), r.lat, r.lng)
+                    }
+                }
+            },
+            onCanceled = {
+                // redosled je bitan ali bez !! više nema NPE
+                showDetails = false
+                selected = null
+                reserved = null
+                reservedDistanceMeters = null
+            }
+        )
+    }
 }
 
 @Composable
 @Suppress("MissingPermission")
-private fun MapboxMapView(modifier: Modifier = Modifier) {
+private fun MapboxMapView(
+    modifier: Modifier = Modifier,
+    onUserPoint: (Point) -> Unit,
+    onParkingTapped: (NearbyParking) -> Unit,
+    onDistanceUpdateForReserved: (Double) -> Unit,
+    reservedSpot: NearbyParking?
+) {
     val context = LocalContext.current
     val activity = context as? Activity
     var hasPermission by remember { mutableStateOf(hasLocationPermission(context)) }
+
+    // uvek najnoviji reservedSpot u listenerima
+    val reservedSpotState by rememberUpdatedState(reservedSpot)
+
     val notificationChannelId = remember { "nearby_events" }
     val nm = remember(context) { NotificationManagerCompat.from(context) }
     val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -104,6 +261,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             notifPermissionLauncher?.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -141,6 +299,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
         )
         return
     }
+
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
@@ -149,12 +308,15 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
     var lastSentMillis by remember { mutableStateOf(0L) }
     val minSendIntervalMs = 10_000L
+
     var parkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
     val proximityMeters = 150.0
     val notifiedIds = remember { mutableStateMapOf<String, Long>() }
     var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+
     var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
+    var mapClickListener: OnMapClickListener? by remember { mutableStateOf(null) }
 
     AndroidView(
         modifier = modifier,
@@ -163,6 +325,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                 mapView = this
                 getMapboxMap().loadStyleUri(Style.MAPBOX_STREETS) {
                     com.stosic.parkup.parking.map.MapboxParkingOverlay.install(this)
+
                     if (hasLocationPermission(context)) {
                         try {
                             location.updateSettings {
@@ -171,6 +334,7 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                             }
                         } catch (_: SecurityException) { }
                     }
+
                     positionListener = OnIndicatorPositionChangedListener { point: Point ->
                         getMapboxMap().setCamera(
                             CameraOptions.Builder()
@@ -179,20 +343,42 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
                                 .build()
                         )
                         lastUserPoint = point
-                        location.removeOnIndicatorPositionChangedListener(positionListener!!)
+                        onUserPoint(point)
+                        positionListener?.let { listener ->
+                            try { location.removeOnIndicatorPositionChangedListener(listener) } catch (_: Exception) {}
+                        }
                     }
-                    location.addOnIndicatorPositionChangedListener(positionListener!!)
+                    positionListener?.let { location.addOnIndicatorPositionChangedListener(it) }
+
                     trackingListener = OnIndicatorPositionChangedListener { point: Point ->
                         lastUserPoint = point
+                        onUserPoint(point)
                         maybeSendLocation(db, uid, point, lastSentMillis, minSendIntervalMs) {
                             lastSentMillis = it
                         }
+                        reservedSpotState?.let { rs ->
+                            val d = distanceMeters(point.latitude(), point.longitude(), rs.lat, rs.lng)
+                            onDistanceUpdateForReserved(d)
+                        }
                         maybeNotifyNearbyParkings(
-                            context, nm, notificationChannelId, hasNotifPermission,
+                            context, NotificationManagerCompat.from(context), notificationChannelId,
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
                             point, parkings, proximityMeters, notifiedIds
                         )
                     }
-                    location.addOnIndicatorPositionChangedListener(trackingListener!!)
+                    trackingListener?.let { location.addOnIndicatorPositionChangedListener(it) }
+
+                    mapClickListener = OnMapClickListener { p: Point ->
+                        val nearest = parkings.minByOrNull { distanceMeters(p.latitude(), p.longitude(), it.lat, it.lng) }
+                        if (nearest != null) {
+                            val d = distanceMeters(p.latitude(), p.longitude(), nearest.lat, nearest.lng)
+                            if (d <= 50.0) {
+                                onParkingTapped(nearest)
+                                true
+                            } else false
+                        } else false
+                    }
+                    mapClickListener?.let { getMapboxMap().addOnMapClickListener(it) }
                 }
             }
         }
@@ -203,16 +389,18 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             val list = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
                 val lng = d.getDouble("lng") ?: return@mapNotNull null
-                val title = d.getString("title") ?: "Parking"
-                val createdBy = d.getString("createdBy") ?: ""
-                val availableSlots = (d.getLong("availableSlots") ?: 0L)
                 NearbyParking(
                     id = d.id,
-                    title = title,
+                    title = d.getString("title") ?: "Parking",
                     lat = lat,
                     lng = lng,
-                    createdBy = createdBy,
-                    available = availableSlots
+                    createdBy = d.getString("createdBy") ?: "",
+                    available = (d.getLong("availableSlots") ?: 0L),
+                    capacity = d.getLong("capacity"),
+                    pricePerHour = (d.getLong("pricePerHour") ?: 0L),
+                    hasEv = d.getBoolean("hasEv") ?: false,
+                    hasRamp = d.getBoolean("hasRamp") ?: false,
+                    isCovered = d.getBoolean("isCovered") ?: false
                 )
             } ?: emptyList()
             parkings = list
@@ -225,8 +413,9 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
     LaunchedEffect(parkings, lastUserPoint) {
         val p = lastUserPoint ?: return@LaunchedEffect
         maybeNotifyNearbyParkings(
-            context, nm, notificationChannelId, hasNotifPermission,
-            p, parkings, proximityMeters, notifiedIds
+            context, nm, notificationChannelId,
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+            p, parkings, 150.0, notifiedIds
         )
     }
 
@@ -237,20 +426,24 @@ private fun MapboxMapView(modifier: Modifier = Modifier) {
             override fun onDestroy(owner: LifecycleOwner) {
                 mapView?.onDestroy()
                 parkingsReg?.remove(); parkingsReg = null
-                trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
-                positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+                try { trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) } } catch (_: Exception) {}
+                try { positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) } } catch (_: Exception) {}
+                try { mapClickListener?.let { mapView?.getMapboxMap()?.removeOnMapClickListener(it) } } catch (_: Exception) {}
                 trackingListener = null
                 positionListener = null
+                mapClickListener = null
                 com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
-            trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
-            positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) }
+            try { trackingListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) } } catch (_: Exception) {}
+            try { positionListener?.let { mapView?.location?.removeOnIndicatorPositionChangedListener(it) } } catch (_: Exception) {}
+            try { mapClickListener?.let { mapView?.getMapboxMap()?.removeOnMapClickListener(it) } } catch (_: Exception) {}
             trackingListener = null
             positionListener = null
+            mapClickListener = null
             com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
         }
     }
@@ -293,7 +486,12 @@ private data class NearbyParking(
     val lat: Double,
     val lng: Double,
     val createdBy: String,
-    val available: Long
+    val available: Long,
+    val capacity: Long?,
+    val pricePerHour: Long,
+    val hasEv: Boolean,
+    val hasRamp: Boolean,
+    val isCovered: Boolean
 )
 
 private fun maybeSendLocation(
@@ -362,9 +560,11 @@ private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Doubl
     val R = 6371000.0
     val dLat = Math.toRadians(lat2 - lat1)
     val dLon = Math.toRadians(lon2 - lon1)
-    val a = sin(dLat / 2).pow(2.0) +
+    val sinDLat = sin(dLat / 2.0)
+    val sinDLon = sin(dLon / 2.0)
+    val a = sinDLat * sinDLat +
             cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-            sin(dLon / 2).pow(2.0)
-    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+            sinDLon * sinDLon
+    val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
     return R * c
 }

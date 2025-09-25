@@ -13,12 +13,9 @@ data class ParkingSpot(
     val lng: Double = 0.0,
     val createdBy: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-
-    // Status i kapacitet
-    val isActive: Boolean = true,            // ostavljamo polje (za kasnije), ali boja markera ide po availableSlots
-    val capacity: Long = 0L,                 // maksimalan kapacitet
-    val availableSlots: Long = 0L,           // trenutno slobodnih (start = capacity)
-
+    val isActive: Boolean = true,
+    val capacity: Long = 0L,
+    val availableSlots: Long = 0L,
     val pricePerHour: Long = 0L
 )
 
@@ -36,14 +33,11 @@ object ParkingRepository {
     ): Result<String> {
         return try {
             val uid = auth.currentUser?.uid ?: throw Exception("Not logged in")
-
-            // duplikat po TAČNOJ adresi (string match)
             val dup = db.collection("parkings")
                 .whereEqualTo("address", address.trim())
                 .limit(1)
                 .get()
                 .await()
-
             if (!dup.isEmpty) {
                 Result.failure(IllegalStateException("Već postoji parking na toj adresi."))
             } else {
@@ -61,10 +55,8 @@ object ParkingRepository {
                     availableSlots = cap
                 )
                 doc.set(spot).await()
-
-                // +10 poena autoru (atomski increment u AuthRepository)
                 AuthRepository.addPoints(uid, 10)
-
+                AuthRepository.incrementParkingCount(uid, 1)
                 Result.success(doc.id)
             }
         } catch (e: Exception) {
