@@ -1,28 +1,44 @@
 package com.stosic.parkup.parking.ui
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import android.util.Base64
 import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.stosic.parkup.R
+import com.stosic.parkup.parking.data.ParkingRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URLEncoder
 import java.net.URL
-import com.stosic.parkup.parking.data.ParkingRepository
-import com.stosic.parkup.R
+import java.net.URLEncoder
 
 @Composable
 fun AddParkingDialog(
@@ -39,6 +55,63 @@ fun AddParkingDialog(
     var query by remember { mutableStateOf("") }
     var suggestions by remember { mutableStateOf<List<AddressSuggestion>>(emptyList()) }
     var picked by remember { mutableStateOf<AddressSuggestion?>(null) }
+
+    // --- NOVO: slika parking mesta (opciono) ---
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var photoBase64 by remember { mutableStateOf<String?>(null) }
+
+    fun uriToBase64(uri: Uri, maxSize: Int = 1024, quality: Int = 85): String {
+        val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, uri))
+        } else {
+            ctx.contentResolver.openInputStream(uri).use { input ->
+                requireNotNull(input)
+                BitmapFactory.decodeStream(input)
+            }
+        }
+        val scale = minOf(maxSize / bmp.width.toFloat(), maxSize / bmp.height.toFloat(), 1f)
+        val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+        val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+        val resized = if (w != bmp.width || h != bmp.height) Bitmap.createScaledBitmap(bmp, w, h, true) else bmp
+        val baos = ByteArrayOutputStream()
+        resized.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+        return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+    }
+
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            photoUri = uri
+            photoBase64 = runCatching { uriToBase64(uri) }.getOrNull()
+        }
+    }
+
+    val takePhoto = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicturePreview()
+    ) { bmp ->
+        if (bmp != null) {
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+            photoBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            // za preview formiramo privremeni uri u MediaStore
+            val name = "parking_${System.currentTimeMillis()}.jpg"
+            val cv = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ParkUp")
+                }
+            }
+            val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+            if (uri != null) {
+                ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                photoUri = uri
+            }
+        }
+    }
 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -114,18 +187,45 @@ fun AddParkingDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Spacer(Modifier.height(8.dp))
+
+                // --- NOVO: UI za sliku ---
+                Text("Slika parking mesta (opciono)", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                        Text("Galerija")
+                    }
+                    OutlinedButton(onClick = { takePhoto.launch(null) }) {
+                        Text("Kamera")
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    when {
+                        photoUri != null -> {
+                            AsyncImage(model = photoUri, contentDescription = null, modifier = Modifier.heightIn(max = 180.dp).fillMaxWidth())
+                        }
+                        photoBase64 != null -> {
+                            val bytes = remember(photoBase64) { Base64.decode(photoBase64, Base64.DEFAULT) }
+                            val bmp = remember(bytes) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                            if (bmp != null) {
+                                Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.heightIn(max = 180.dp).fillMaxWidth())
+                            }
+                        }
+                    }
+                }
+
                 picked?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "Koordinate: ${"%.6f".format(it.lat)}, ${"%.6f".format(it.lng)}",
-                        fontSize = 12.sp,
-                        color = Color(0xFF5E6A7D)
+                        fontSize = 12.sp
                     )
                 }
 
                 if (error != null) {
                     Spacer(Modifier.height(8.dp))
-                    Text(error!!, color = Color(0xFFB71C1C), fontSize = 12.sp)
+                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
             }
         },
@@ -147,7 +247,8 @@ fun AddParkingDialog(
                             lat = pick.lat,
                             lng = pick.lng,
                             pricePerHour = p,
-                            capacity = capVal
+                            capacity = capVal,
+                            photoBase64 = photoBase64 // NOVO
                         )
                         busy = false
                         if (r.isSuccess) onSaved() else {
@@ -170,7 +271,7 @@ fun AddParkingDialog(
     )
 }
 
-// --- UI helpers & REST (isti kao ranije) ---
+// --- UI helpers & REST (kao ranije) ---
 
 @Composable
 private fun SuggestionRow(
@@ -185,7 +286,7 @@ private fun SuggestionRow(
     ) {
         Text(item.primaryText, fontWeight = FontWeight.SemiBold)
         if (item.secondaryText.isNotBlank()) {
-            Text(item.secondaryText, fontSize = 12.sp, color = Color(0xFF5E6A7D))
+            Text(item.secondaryText, fontSize = 12.sp)
         }
     }
 }
@@ -210,62 +311,22 @@ private fun readMapboxToken(ctx: android.content.Context): String {
     return runCatching { ctx.getString(R.string.mapbox_access_token) }.getOrDefault("")
 }
 
-private suspend fun geocodeSuggestions(query: String, token: String): List<AddressSuggestion> {
-    if (token.isBlank()) return emptyList()
-
-    val encoded = URLEncoder.encode(query, "UTF-8")
-    val bbox = "21.78,43.26,22.05,43.40" // okvir Niša
-    val url = "https://api.mapbox.com/geocoding/v5/mapbox.places/$encoded.json" +
-            "?autocomplete=true&limit=5&country=RS&bbox=$bbox&access_token=$token"
-
-    return withContext(Dispatchers.IO) {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 8000
-            readTimeout = 8000
-        }
-        try {
-            conn.inputStream.bufferedReader().use { br ->
-                val raw = br.readText()
-                parseGeocodingResponse(raw)
+private suspend fun geocodeSuggestions(query: String, token: String): List<AddressSuggestion> =
+    withContext(Dispatchers.IO) {
+        val q = URLEncoder.encode(query, "UTF-8")
+        val url = URL("https://api.mapbox.com/geocoding/v5/mapbox.places/$q.json?types=address&limit=5&language=sr&autocomplete=true&access_token=$token&proximity=21.90,43.30")
+        val conn = (url.openConnection() as HttpURLConnection).apply { connectTimeout = 6000; readTimeout = 6000 }
+        conn.inputStream.use { inp ->
+            val raw = inp.readBytes().decodeToString()
+            val jo = JSONObject(raw)
+            val feats = jo.optJSONArray("features") ?: JSONArray()
+            (0 until feats.length()).mapNotNull { i ->
+                val f = feats.getJSONObject(i)
+                val place = f.optString("place_name_sr", f.optString("place_name", ""))
+                val center = f.optJSONArray("center") ?: return@mapNotNull null
+                val lng = center.optDouble(0); val lat = center.optDouble(1)
+                val text = f.optString("text_sr", f.optString("text", ""))
+                AddressSuggestion(primaryText = text, secondaryText = place, fullAddress = place, lat = lat, lng = lng)
             }
-        } finally {
-            conn.disconnect()
         }
     }
-}
-
-private fun parseGeocodingResponse(raw: String): List<AddressSuggestion> {
-    val root = JSONObject(raw)
-    val features: JSONArray = root.optJSONArray("features") ?: JSONArray()
-    val out = ArrayList<AddressSuggestion>(features.length())
-    for (i in 0 until features.length()) {
-        val f = features.optJSONObject(i) ?: continue
-        val placeName = f.optString("place_name")
-        val text = f.optString("text")
-        val ctxArr = f.optJSONArray("context") ?: JSONArray()
-        var secondary = ""
-        if (ctxArr.length() > 0) {
-            val names = mutableListOf<String>()
-            for (j in 0 until ctxArr.length()) {
-                val obj = ctxArr.optJSONObject(j) ?: continue
-                val nm = obj.optString("text")
-                if (nm.isNotBlank()) names.add(nm)
-            }
-            secondary = names.joinToString(", ")
-        }
-        val center = f.optJSONArray("center") ?: continue
-        val lng = center.optDouble(0)
-        val lat = center.optDouble(1)
-        out.add(
-            AddressSuggestion(
-                primaryText = text.ifBlank { placeName },
-                secondaryText = secondary,
-                fullAddress = placeName,
-                lat = lat,
-                lng = lng
-            )
-        )
-    }
-    return out
-}

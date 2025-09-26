@@ -2,6 +2,7 @@ package com.stosic.parkup.parking.data
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import com.stosic.parkup.auth.data.AuthRepository
 
@@ -16,7 +17,8 @@ data class ParkingSpot(
     val isActive: Boolean = true,
     val capacity: Long = 0L,
     val availableSlots: Long = 0L,
-    val pricePerHour: Long = 0L
+    val pricePerHour: Long = 0L,
+    val photoBase64: String? = null // NOVO
 )
 
 object ParkingRepository {
@@ -29,7 +31,8 @@ object ParkingRepository {
         lat: Double,
         lng: Double,
         pricePerHour: Long = 0L,
-        capacity: Long = 0L
+        capacity: Long = 0L,
+        photoBase64: String? = null // NOVO
     ): Result<String> {
         return try {
             val uid = auth.currentUser?.uid ?: throw Exception("Not logged in")
@@ -52,13 +55,26 @@ object ParkingRepository {
                     createdBy = uid,
                     pricePerHour = pricePerHour,
                     capacity = cap,
-                    availableSlots = cap
+                    availableSlots = cap,
+                    photoBase64 = photoBase64
                 )
                 doc.set(spot).await()
                 AuthRepository.addPoints(uid, 10)
                 AuthRepository.incrementParkingCount(uid, 1)
                 Result.success(doc.id)
             }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // NOVO: update slike parkinga (samo kreator bi trebalo da zove ovo iz UI)
+    suspend fun setParkingPhoto(parkingId: String, base64: String): Result<Unit> {
+        return try {
+            db.collection("parkings").document(parkingId)
+                .set(mapOf("photoBase64" to base64), SetOptions.merge())
+                .await()
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }

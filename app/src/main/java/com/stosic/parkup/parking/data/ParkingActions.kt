@@ -127,27 +127,46 @@ object ParkingActions {
         }
     }
 
-    suspend fun likeComment(parkingId: String, commentId: String, commentAuthorUid: String): Result<Unit> {
+    // NOVO: jedinstveno glasanje po korisniku; zabrana self-like/dislike
+    suspend fun voteComment(
+        parkingId: String,
+        commentId: String,
+        commentAuthorUid: String,
+        vote: String // "like" ili "dislike"
+    ): Result<Unit> {
         return try {
-            val cref = db.collection("parkings").document(parkingId)
-                .collection("comments").document(commentId)
-            db.runTransaction { tr ->
-                tr.update(cref, "likes", FieldValue.increment(1))
-            }.await()
-            AuthRepository.addPoints(commentAuthorUid, 2)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+            val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
+            if (uid == commentAuthorUid) return Result.failure(IllegalStateException("Ne možeš glasati za sopstveni komentar."))
 
-    suspend fun dislikeComment(parkingId: String, commentId: String): Result<Unit> {
-        return try {
             val cref = db.collection("parkings").document(parkingId)
                 .collection("comments").document(commentId)
+            val vref = cref.collection("votes").document(uid)
+
             db.runTransaction { tr ->
-                tr.update(cref, "dislikes", FieldValue.increment(1))
+                val vsnap = tr.get(vref)
+                val prev = vsnap.getString("vote") // "like" ili "dislike" ili null
+
+                if (prev == vote) {
+                    // već glasao isto – ništa
+                    return@runTransaction
+                }
+
+                // ažuriraj brojače
+                if (vote == "like") {
+                    tr.update(cref, "likes", FieldValue.increment(1))
+                    if (prev == "dislike") tr.update(cref, "dislikes", FieldValue.increment(-1))
+                } else {
+                    tr.update(cref, "dislikes", FieldValue.increment(1))
+                    if (prev == "like") tr.update(cref, "likes", FieldValue.increment(-1))
+                }
+
+                tr.set(vref, mapOf("vote" to vote), SetOptions.merge())
             }.await()
+
+            if (vote == "like") {
+                // nagradi autora +2, kao i ranije
+                AuthRepository.addPoints(commentAuthorUid, 2)
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

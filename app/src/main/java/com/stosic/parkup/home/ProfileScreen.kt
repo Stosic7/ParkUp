@@ -1,30 +1,21 @@
 package com.stosic.parkup.home
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
+import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,38 +27,15 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -80,7 +48,8 @@ import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
+import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -94,22 +63,18 @@ fun ProfileScreen(
     val db = remember { FirebaseFirestore.getInstance() }
     val auth = remember { FirebaseAuth.getInstance() }
     val uid = auth.currentUser?.uid
+    val ctx = LocalContext.current
 
     var ime by remember { mutableStateOf("") }
     var prezime by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
     var email by remember { mutableStateOf(userEmail) }
-    var photoUrl by remember { mutableStateOf("") }
+    var photoBase64 by remember { mutableStateOf("") }
 
     var bio by remember { mutableStateOf("") }
     var points by remember { mutableStateOf(0L) }
     var rank by remember { mutableStateOf(0L) }
     var parkingCount by remember { mutableStateOf(0L) }
-
-    var isEditingBio by remember { mutableStateOf(false) }
-    var draftBio by remember { mutableStateOf("") }
-    var saving by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     var userDocReg by remember { mutableStateOf<ListenerRegistration?>(null) }
     var usersReg by remember { mutableStateOf<ListenerRegistration?>(null) }
@@ -117,6 +82,7 @@ fun ProfileScreen(
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showChangePass by remember { mutableStateOf(false) }
 
+    // Prefill iz userData (ostavljeno kako je bilo)
     var didPrefill by remember { mutableStateOf(false) }
     LaunchedEffect(userData) {
         if (!didPrefill && userData != null) {
@@ -124,7 +90,6 @@ fun ProfileScreen(
             prezime = userData["prezime"] ?: ""
             telefon = userData["telefon"] ?: ""
             email = userData["email"] ?: email
-            photoUrl = userData["photoUrl"] ?: ""
             bio = userData["bio"] ?: ""
             points = userData["points"]?.toLongOrNull() ?: 0L
             parkingCount = userData["parkingCount"]?.toLongOrNull() ?: 0L
@@ -132,6 +97,7 @@ fun ProfileScreen(
         }
     }
 
+    // Realtime korisnik (uključuje photoBase64)
     DisposableEffect(uid) {
         if (uid != null) {
             userDocReg?.remove()
@@ -142,7 +108,7 @@ fun ProfileScreen(
                         prezime = doc.getString("prezime") ?: prezime
                         telefon = doc.getString("telefon") ?: telefon
                         email = doc.getString("email") ?: email
-                        photoUrl = doc.getString("photoUrl") ?: photoUrl
+                        photoBase64 = doc.getString("photoBase64") ?: photoBase64
                         bio = doc.getString("bio") ?: bio
                         points = doc.getLong("points") ?: points
                         parkingCount = doc.getLong("parkingCount") ?: parkingCount
@@ -152,6 +118,7 @@ fun ProfileScreen(
         onDispose { userDocReg?.remove(); userDocReg = null }
     }
 
+    // Rang (ostavljeno)
     DisposableEffect(uid) {
         usersReg?.remove()
         usersReg = db.collection("users")
@@ -162,8 +129,7 @@ fun ProfileScreen(
                     id to pts
                 }.orEmpty()
                 val ordered = list.sortedWith(
-                    compareByDescending<Pair<String, Long>> { it.second }
-                        .thenBy { it.first }
+                    compareByDescending<Pair<String, Long>> { it.second }.thenBy { it.first }
                 )
                 val idx = ordered.indexOfFirst { it.first == uid }
                 if (idx >= 0) rank = (idx + 1).toLong()
@@ -171,26 +137,88 @@ fun ProfileScreen(
         onDispose { usersReg?.remove(); usersReg = null }
     }
 
-    var isUploading by remember { mutableStateOf(false) }
+    // Pending Base64 iz registracije (SharedPreferences)
+    LaunchedEffect(uid) {
+        if (uid != null) {
+            val prefs = ctx.getSharedPreferences("parkup_prefs", Context.MODE_PRIVATE)
+            val pending = prefs.getString("pending_profile_b64", null)
+            if (!pending.isNullOrBlank()) {
+                runCatching {
+                    db.collection("users").document(uid).update("photoBase64", pending).await()
+                    photoBase64 = pending
+                }
+                prefs.edit().remove("pending_profile_b64").apply()
+            }
+        }
+    }
+
+    // Local preview i upload state
     var localPreview by remember { mutableStateOf<Uri?>(null) }
+    var isUploading by remember { mutableStateOf(false) }
+
+    // Helperi za kodiranje/dekodiranje
+    fun uriToBase64(context: Context, uri: Uri, maxSizePx: Int = 256, quality: Int = 80): String {
+        val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val src = ImageDecoder.createSource(context.contentResolver, uri)
+            ImageDecoder.decodeBitmap(src)
+        } else {
+            // Fallback za starije
+            context.contentResolver.openInputStream(uri).use { input ->
+                requireNotNull(input)
+                BitmapFactory.decodeStream(input)
+            }
+        }
+        val scale = minOf(maxSizePx / bmp.width.toFloat(), maxSizePx / bmp.height.toFloat(), 1f)
+        val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+        val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+        val resized = if (w != bmp.width || h != bmp.height) {
+            Bitmap.createScaledBitmap(bmp, w, h, true)
+        } else bmp
+        val baos = ByteArrayOutputStream()
+        resized.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+        return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+    }
+
+    fun base64ToBitmap(b64: String): Bitmap? = try {
+        val bytes = Base64.decode(b64, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (_: Exception) { null }
+
+    // Galerija → Base64 → Firestore
     val pickMedia = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null && uid != null) {
-            localPreview = uri
-            val storageRef = FirebaseStorage.getInstance().reference.child("profile_pictures/$uid.jpg")
+            localPreview = uri  // odmah pokaži preview
             isUploading = true
-            storageRef.putFile(uri)
+            runCatching {
+                val b64 = uriToBase64(ctx, uri)
+                db.collection("users").document(uid)
+                    .update(mapOf("photoBase64" to b64))
+                    .addOnSuccessListener {
+                        photoBase64 = b64
+                        isUploading = false
+                    }
+                    .addOnFailureListener { isUploading = false }
+            }.onFailure { isUploading = false }
+        }
+    }
+
+    // Kamera → Bitmap → Base64 → Firestore
+    val takePhoto = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bmp: Bitmap? ->
+        if (bmp != null && uid != null) {
+            isUploading = true
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+            val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            db.collection("users").document(uid)
+                .update(mapOf("photoBase64" to b64))
                 .addOnSuccessListener {
-                    storageRef.downloadUrl.addOnSuccessListener { url ->
-                        FirebaseFirestore.getInstance().collection("users").document(uid)
-                            .update(mapOf("photoUrl" to url.toString()))
-                            .addOnSuccessListener {
-                                photoUrl = url.toString()
-                                isUploading = false
-                            }
-                            .addOnFailureListener { isUploading = false }
-                    }.addOnFailureListener { isUploading = false }
+                    photoBase64 = b64
+                    localPreview = null
+                    isUploading = false
                 }
                 .addOnFailureListener { isUploading = false }
         }
@@ -201,11 +229,12 @@ fun ProfileScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Nazad", tint = Color.White)
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Nazad", tint = Color.White)
                     }
                 },
-                title = { Text("Profil", color = Color.White, fontWeight = FontWeight.SemiBold,
-                    fontStyle = FontStyle.Italic) },
+                title = {
+                    Text("Profil", color = Color.White, fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Italic)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF42A5F5))
             )
         },
@@ -225,38 +254,54 @@ fun ProfileScreen(
                         .size(72.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF90CAF9))
-                        .clickable { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        .clickable {
+                            pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    val preview = localPreview
                     when {
-                        preview != null -> {
+                        // 1) lokalni preview (URI) – AsyncImage
+                        localPreview != null -> {
                             AsyncImage(
-                                model = preview,
-                                contentDescription = "Profilna slika",
+                                model = localPreview,
+                                contentDescription = "Profilna",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
-                        photoUrl.isNotBlank() -> {
-                            AsyncImage(
-                                model = photoUrl,
-                                contentDescription = "Profilna slika",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                        // 2) trajna slika iz Firestore (Base64) – ručni decode u Bitmap
+                        photoBase64.isNotBlank() -> {
+                            val bmp = remember(photoBase64) { base64ToBitmap(photoBase64) }
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "Profilna",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Person,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(56.dp)
+                                )
+                            }
                         }
+                        // 3) fallback – ikonica
                         else -> {
                             Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Profilna slika",
+                                imageVector = Icons.Filled.Person,
+                                contentDescription = null,
                                 tint = Color.White,
                                 modifier = Modifier.size(56.dp)
                             )
                         }
                     }
                 }
+
                 Spacer(Modifier.width(16.dp))
+
                 Column {
                     val displayName = listOf(ime, prezime).filter { it.isNotBlank() }.joinToString(" ").ifBlank { email }
                     Text(
@@ -268,92 +313,23 @@ fun ProfileScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                        Icon(imageVector = Icons.Default.EmojiEvents, contentDescription = "Rang", tint = Color(0xFFFFC107))
+                        Icon(imageVector = Icons.Filled.EmojiEvents, contentDescription = "Rang", tint = Color(0xFFFFC107))
                         Spacer(Modifier.width(6.dp))
                         Text(text = "Rank: ${if (rank > 0) "#$rank" else "-"} • Points: $points", fontSize = 14.sp)
                     }
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF7F9FC))
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Bio", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
-                        AnimatedContent(
-                            targetState = isEditingBio,
-                            transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                            label = "bio-edit"
-                        ) { editing ->
-                            Row {
-                                if (editing) {
-                                    IconButton(
-                                        onClick = {
-                                            saving = true
-                                            val data = hashMapOf("bio" to draftBio)
-                                            FirebaseFirestore.getInstance().collection("users").document(uid!!)
-                                                .update(data as Map<String, Any>)
-                                                .addOnSuccessListener {
-                                                    bio = draftBio
-                                                    errorMsg = null
-                                                    saving = false
-                                                    isEditingBio = false
-                                                }
-                                                .addOnFailureListener {
-                                                    saving = false
-                                                    errorMsg = it.message ?: "Greška pri čuvanju"
-                                                }
-                                        },
-                                        enabled = !saving
-                                    ) { Icon(Icons.Outlined.Save, contentDescription = "Sačuvaj", tint = Color(0xFF2E7D32)) }
-                                    IconButton(
-                                        onClick = { draftBio = bio; isEditingBio = false; errorMsg = null },
-                                        enabled = !saving
-                                    ) { Icon(Icons.Outlined.Close, contentDescription = "Otkaži", tint = Color(0xFFB71C1C)) }
-                                } else {
-                                    IconButton(onClick = { draftBio = bio; isEditingBio = true; errorMsg = null }) {
-                                        Icon(Icons.Outlined.Edit, contentDescription = "Izmeni bio", tint = Color(0xFF1976D2))
-                                    }
-                                }
-                            }
-                        }
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    enabled = !isUploading
+                ) { Text(if (isUploading) "Učitavam..." else "Promeni (Galerija)") }
 
-                    Spacer(Modifier.height(8.dp))
-                    AnimatedContent(
-                        targetState = isEditingBio,
-                        transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                        label = "bio-content"
-                    ) { editing ->
-                        if (editing) {
-                            Column {
-                                OutlinedTextField(
-                                    value = draftBio,
-                                    onValueChange = { draftBio = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 120.dp),
-                                    placeholder = { Text("Napiši nešto o sebi...") }
-                                )
-                                if (errorMsg != null) {
-                                    Text(errorMsg!!, color = Color(0xFFB71C1C), modifier = Modifier.padding(top = 8.dp))
-                                }
-                            }
-                        } else {
-                            Text(
-                                text = if (bio.isBlank()) "Nema opisa." else bio,
-                                color = Color(0xFF37474F)
-                            )
-                        }
-                    }
-                }
+                OutlinedButton(
+                    onClick = { takePhoto.launch(null) },
+                    enabled = !isUploading
+                ) { Text(if (isUploading) "Učitavam..." else "Uslikaj (Kamera)") }
             }
 
             StatsCard(points = points, rank = rank, parkingCount = parkingCount)
@@ -394,12 +370,11 @@ fun ProfileScreen(
     }
 
     if (showChangePass) {
-        ChangePasswordDialog(
-            email = email,
-            onDismiss = { showChangePass = false }
-        )
+        ChangePasswordDialog(email = email, onDismiss = { showChangePass = false })
     }
 }
+
+/* --- Ostali kompozabli (StatsCard, ProgressCard, BadgesRow, ChangePasswordDialog) ostaju ISTI kao kod tebe --- */
 
 @Composable
 private fun StatsCard(points: Long, rank: Long, parkingCount: Long) {
@@ -410,25 +385,13 @@ private fun StatsCard(points: Long, rank: Long, parkingCount: Long) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column {
-                    Text("Poeni", fontWeight = FontWeight.SemiBold)
-                    Text("$points", fontSize = 20.sp)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Rang", fontWeight = FontWeight.SemiBold)
-                    Text(if (rank > 0) "#$rank" else "-", fontSize = 20.sp)
-                }
+                Column { Text("Poeni", fontWeight = FontWeight.SemiBold); Text("$points", fontSize = 20.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("Rang", fontWeight = FontWeight.SemiBold); Text(if (rank > 0) "#$rank" else "-", fontSize = 20.sp) }
             }
             Divider()
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column {
-                    Text("Parking objave", fontWeight = FontWeight.SemiBold)
-                    Text("$parkingCount", fontSize = 20.sp)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Status", fontWeight = FontWeight.SemiBold)
-                    Text(if (points > 0) "Aktivan" else "Nov", fontSize = 20.sp)
-                }
+                Column { Text("Parking objave", fontWeight = FontWeight.SemiBold); Text("$parkingCount", fontSize = 20.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("Status", fontWeight = FontWeight.SemiBold); Text(if (points > 0) "Aktivan" else "Nov", fontSize = 20.sp) }
             }
         }
     }
@@ -445,15 +408,9 @@ private fun ProgressCard(points: Long) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Napredak do sledećeg ranga", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
-            LinearProgressIndicator(progress = progress, modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp))
+            LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(8.dp))
             val toNext = (maxForTier - points).coerceAtLeast(0)
-            Text(
-                text = if (toNext > 0) "Još $toNext poena do sledećeg ranga" else "Maksimalni rang u ovom modelu",
-                fontSize = 12.sp,
-                color = Color(0xFF607D8B)
-            )
+            Text(if (toNext > 0) "Još $toNext poena do sledećeg ranga" else "Maksimalni rang u ovom modelu", fontSize = 12.sp, color = Color(0xFF607D8B))
         }
     }
 }
@@ -467,11 +424,8 @@ private fun BadgesRow(points: Long) {
         "Pro" to (points >= 50),
         "Elite" to (points >= 100)
     )
-
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         badges.forEach { (name, unlocked) ->
@@ -480,9 +434,7 @@ private fun BadgesRow(points: Long) {
                 colors = CardDefaults.cardColors(containerColor = if (unlocked) Color(0xFFE8F5E9) else Color(0xFFF0F4F8))
             ) {
                 Box(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                        .heightIn(min = 40.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp).heightIn(min = 40.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -499,10 +451,7 @@ private fun BadgesRow(points: Long) {
 }
 
 @Composable
-private fun ChangePasswordDialog(
-    email: String,
-    onDismiss: () -> Unit
-) {
+private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
     var currentPass by remember { mutableStateOf("") }
     var newPass by remember { mutableStateOf("") }
     var confirmPass by remember { mutableStateOf("") }
@@ -517,46 +466,28 @@ private fun ChangePasswordDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = currentPass,
-                    onValueChange = { currentPass = it },
+                    value = currentPass, onValueChange = { currentPass = it },
                     label = { Text("Trenutna lozinka") },
                     visualTransformation = if (showCur) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showCur = !showCur }) {
-                            Icon(if (showCur) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
-                        }
-                    },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    trailingIcon = { IconButton(onClick = { showCur = !showCur }) { Icon(if (showCur) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
+                    leadingIcon = { Icon(Icons.Filled.Lock, null) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
-                    value = newPass,
-                    onValueChange = { newPass = it },
+                    value = newPass, onValueChange = { newPass = it },
                     label = { Text("Nova lozinka") },
                     visualTransformation = if (showNew) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showNew = !showNew }) {
-                            Icon(if (showNew) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
-                        }
-                    },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    trailingIcon = { IconButton(onClick = { showNew = !showNew }) { Icon(if (showNew) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
+                    leadingIcon = { Icon(Icons.Filled.Lock, null) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
-                    value = confirmPass,
-                    onValueChange = { confirmPass = it },
+                    value = confirmPass, onValueChange = { confirmPass = it },
                     label = { Text("Ponovi novu lozinku") },
                     visualTransformation = if (showConf) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showConf = !showConf }) {
-                            Icon(if (showConf) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
-                        }
-                    },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    trailingIcon = { IconButton(onClick = { showConf = !showConf }) { Icon(if (showConf) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
+                    leadingIcon = { Icon(Icons.Filled.Lock, null) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 if (err != null) Text(err!!, color = Color(0xFFB71C1C))
             }
@@ -564,14 +495,8 @@ private fun ChangePasswordDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (newPass.length < 6) {
-                        err = "Nova lozinka mora imati bar 6 karaktera"
-                        return@TextButton
-                    }
-                    if (newPass != confirmPass) {
-                        err = "Nova lozinka i potvrda se ne poklapaju"
-                        return@TextButton
-                    }
+                    if (newPass.length < 6) { err = "Nova lozinka mora imati bar 6 karaktera"; return@TextButton }
+                    if (newPass != confirmPass) { err = "Nova lozinka i potvrda se ne poklapaju"; return@TextButton }
                     val user = auth.currentUser
                     val mail = user?.email ?: email
                     val cred = EmailAuthProvider.getCredential(mail, currentPass)
