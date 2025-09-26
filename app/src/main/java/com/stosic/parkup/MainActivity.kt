@@ -1,23 +1,69 @@
 package com.stosic.parkup
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
 import com.stosic.parkup.auth.ui.LoginScreen
 import com.stosic.parkup.auth.ui.RegisterScreen
 import com.stosic.parkup.auth.ui.StartingScreen
+import com.stosic.parkup.core.location.LocationUpdatesService
 import com.stosic.parkup.home.HomeContent
 import com.stosic.parkup.ui.CustomPopup
 
 class MainActivity : ComponentActivity() {
+
+    private val auth by lazy { FirebaseAuth.getInstance() }
+    private val db by lazy { FirebaseFirestore.getInstance() }
+
+    // Tražimo permisije (ne diramo UI dok to radimo)
+    private val requestPerms = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        maybeStartLocationService()
+        // Post notifications permission rezultat nam ne treba ovde – FCM servis već proverava.
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { AuthHost() }
+
+        // 1) Traži FINE_LOCATION (+ POST_NOTIFICATIONS za Android 13+)
+        val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms += Manifest.permission.POST_NOTIFICATIONS
+        }
+        requestPerms.launch(perms.toTypedArray())
+
+        // 2) Hook na login/logout: upiši FCM token i pokreni/zaustavi servis za lokaciju
+        auth.addAuthStateListener { fa ->
+            val user = fa.currentUser
+            if (user != null) {
+                FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                    db.collection("users").document(user.uid)
+                        .update(mapOf("fcmToken" to token))
+                }
+                maybeStartLocationService()
+            } else {
+                stopService(Intent(this, LocationUpdatesService::class.java))
+            }
+        }
+    }
+
+    private fun maybeStartLocationService() {
+        val user = auth.currentUser ?: return
+        val intent = Intent(this, LocationUpdatesService::class.java)
+        ContextCompat.startForegroundService(this, intent)
     }
 }
 

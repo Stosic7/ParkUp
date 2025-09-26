@@ -23,10 +23,14 @@ import com.mapbox.maps.plugin.gestures.gestures
 import com.stosic.parkup.parking.data.ParkingSpot
 import kotlin.math.*
 
+// --- DODATO: da bismo čitali moju lokaciju i radijus iz users/{uid}
+import com.google.firebase.auth.FirebaseAuth
+
 /**
  * Stabilan overlay bez annotation plugina i bez queryRenderedFeatures klika.
  * - DVA GeoJSON izvora (GREEN/RED) + DVA SymbolLayer-a
  * - Klik: računa najbliži ParkingSpot u malom radijusu (30 m) i vraća ga.
+ * - DODATO: filtriranje parkinga po `users/{uid}.searchRadius` oko `users/{uid}.lat/lng`
  */
 object MapboxParkingOverlay {
 
@@ -44,6 +48,12 @@ object MapboxParkingOverlay {
     private var srcRedRef: GeoJsonSource? = null
 
     private var clickListener: OnMapClickListener? = null
+
+    // --- DODATO: realtime moja lokacija + radijus ---
+    private var userReg: ListenerRegistration? = null
+    private var myLat: Double? = null
+    private var myLng: Double? = null
+    private var searchRadiusMeters: Int = 0 // 0 = isključeno
 
     fun install(
         mapView: MapView,
@@ -92,15 +102,29 @@ object MapboxParkingOverlay {
         style.addLayer(layerGreen)
         style.addLayer(layerRed)
 
-        // Firestore realtime → puni izvore
+        // Firestore realtime → puni izvore (sirovi spisak)
         reg?.remove()
         reg = FirebaseFirestore.getInstance()
             .collection("parkings")
             .addSnapshotListener { qs, _ ->
                 val list = qs?.documents?.mapNotNull { it.toObject(ParkingSpot::class.java) }.orEmpty()
                 currentSpots = list
-                updateSources(list)
+                updateSources(list) // <-- filtriranje se radi unutar updateSources
             }
+
+        // --- DODATO: slušaj users/{uid} za lat/lng + searchRadius ---
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
+        userReg?.remove()
+        if (uid != null) {
+            userReg = FirebaseFirestore.getInstance()
+                .collection("users").document(uid)
+                .addSnapshotListener { doc, _ ->
+                    myLat = doc?.getDouble("lat")
+                    myLng = doc?.getDouble("lng")
+                    searchRadiusMeters = (doc?.getLong("searchRadius") ?: 0L).toInt()
+                    updateSources(currentSpots)
+                }
+        }
 
         // Klik listener: najbliži spot u 30 m
         clickListener?.let { mapView.gestures.removeOnMapClickListener(it) }
@@ -117,6 +141,7 @@ object MapboxParkingOverlay {
 
     fun cleanup(mapView: MapView? = null) {
         reg?.remove(); reg = null
+        userReg?.remove(); userReg = null
         if (mapView != null && clickListener != null) {
             mapView.gestures.removeOnMapClickListener(clickListener!!)
         }
@@ -131,7 +156,16 @@ object MapboxParkingOverlay {
         val greenFeats = ArrayList<Feature>()
         val redFeats = ArrayList<Feature>()
 
-        for (p in spots) {
+        // --- DODATO: primeni filtriranje po radijusu ako imamo centar i radius > 0 ---
+        val filtered = if (myLat != null && myLng != null && searchRadiusMeters > 0) {
+            spots.filter { p ->
+                haversineMeters(myLat!!, myLng!!, p.lat, p.lng) <= searchRadiusMeters
+            }
+        } else {
+            spots
+        }
+
+        for (p in filtered) {
             val f = Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat))
             val label = when {
                 p.title.isNotBlank() -> p.title

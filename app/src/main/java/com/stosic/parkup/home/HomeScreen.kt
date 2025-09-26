@@ -61,6 +61,7 @@ import com.mapbox.android.gestures.MoveGestureDetector
 import com.stosic.parkup.parking.ui.AddParkingFab
 import com.stosic.parkup.parking.ui.AddParkingDialog
 import com.stosic.parkup.parking.ui.ParkingDetailsScreen
+import com.stosic.parkup.parking.map.MapboxParkingOverlay
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.atan2
@@ -69,6 +70,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.launch
+// --- DODATO za vremenski opseg ---
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // ---------- Filter model ----------
 
@@ -78,10 +83,15 @@ private data class ParkingFilter(
     val hasEv: Boolean = false,
     val hasRamp: Boolean = false,
     val isCovered: Boolean = false,
-    val maxDistanceMeters: Double? = null
+    val maxDistanceMeters: Double? = null,
+    // --- DODATO: autor + opseg datuma ---
+    val authorQuery: String = "",
+    val fromDate: String = "",   // yyyy-MM-dd
+    val toDate: String = ""      // yyyy-MM-dd
 ) {
     val isActive: Boolean
-        get() = onlyAvailable || maxPricePerHour != null || hasEv || hasRamp || isCovered || maxDistanceMeters != null
+        get() = onlyAvailable || maxPricePerHour != null || hasEv || hasRamp || isCovered ||
+                maxDistanceMeters != null || authorQuery.isNotBlank() || fromDate.isNotBlank() || toDate.isNotBlank()
 }
 
 private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean {
@@ -94,6 +104,9 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
         val d = distanceMeters(userPoint.latitude(), userPoint.longitude(), p.lat, p.lng)
         if (d > maxDistanceMeters) return false
     }
+    // --- DODATO: autor + datumi ---
+    if (authorQuery.isNotBlank() && !p.createdBy.contains(authorQuery, ignoreCase = true)) return false
+    // datumi se filtriraju dole u listi (jer treba inclusive-opseg na "Do"), ali i ovde ne škodi:
     return true
 }
 
@@ -130,11 +143,24 @@ fun HomeScreen(
     var filter by remember { mutableStateOf(ParkingFilter()) }
     var showFilteredList by remember { mutableStateOf(false) }
     var allParkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
+
+    // --- DODATO: parser datuma i pomoćne granice (inclusive "Do") ---
+    val sdf = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    fun parseDate(s: String): Long? = runCatching { sdf.parse(s)?.time }.getOrNull()
+
     val filtered = remember(allParkings, filter, lastUserPoint) {
-        allParkings.filter { filter.matches(it, lastUserPoint) }
-            .sortedBy { p ->
-                lastUserPoint?.let { distanceMeters(it.latitude(), it.longitude(), p.lat, p.lng) } ?: Double.MAX_VALUE
-            }
+        val base = allParkings.filter { filter.matches(it, lastUserPoint) }
+
+        val fromMillis = parseDate(filter.fromDate) ?: Long.MIN_VALUE
+        val toMillisIncl = (parseDate(filter.toDate)?.let { it + (24L * 60 * 60 * 1000 - 1) }) ?: Long.MAX_VALUE
+
+        base.filter { row ->
+            val authorOk = filter.authorQuery.isBlank() || row.createdBy.contains(filter.authorQuery, true)
+            val timeOk = row.createdAt in fromMillis..toMillisIncl
+            authorOk && timeOk
+        }.sortedBy { p ->
+            lastUserPoint?.let { distanceMeters(it.latitude(), it.longitude(), p.lat, p.lng) } ?: Double.MAX_VALUE
+        }
     }
 
     // map focus
@@ -449,6 +475,10 @@ private fun FilterSheet(
     var hasRamp by remember { mutableStateOf(initial.hasRamp) }
     var isCovered by remember { mutableStateOf(initial.isCovered) }
     var maxDistText by remember { mutableStateOf(initial.maxDistanceMeters?.roundToInt()?.toString().orEmpty()) }
+    // --- DODATO: autor + opseg datuma ---
+    var authorText by remember { mutableStateOf(initial.authorQuery) }
+    var fromDate by remember { mutableStateOf(initial.fromDate) }
+    var toDate by remember { mutableStateOf(initial.toDate) }
 
     Column(
         modifier = Modifier
@@ -487,6 +517,31 @@ private fun FilterSheet(
             modifier = Modifier.fillMaxWidth()
         )
 
+        // --- DODATO: autor + datum od/do ---
+        OutlinedTextField(
+            value = authorText,
+            onValueChange = { authorText = it },
+            label = { Text("Autor (uid/email)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = fromDate,
+                onValueChange = { fromDate = it },
+                label = { Text("Od (yyyy-MM-dd)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = toDate,
+                onValueChange = { toDate = it },
+                label = { Text("Do (yyyy-MM-dd)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -504,7 +559,10 @@ private fun FilterSheet(
                         hasEv = hasEv,
                         hasRamp = hasRamp,
                         isCovered = isCovered,
-                        maxDistanceMeters = maxDistText.toDoubleOrNull()
+                        maxDistanceMeters = maxDistText.toDoubleOrNull(),
+                        authorQuery = authorText,
+                        fromDate = fromDate,
+                        toDate = toDate
                     )
                     onApply(new)
                 },
@@ -811,7 +869,9 @@ private fun MapboxMapView(
                     pricePerHour = (d.getLong("pricePerHour") ?: 0L),
                     hasEv = d.getBoolean("hasEv") ?: false,
                     hasRamp = d.getBoolean("hasRamp") ?: false,
-                    isCovered = d.getBoolean("isCovered") ?: false
+                    isCovered = d.getBoolean("isCovered") ?: false,
+                    // --- DODATO: createdAt za vremenski opseg (0 ako nema)
+                    createdAt = (d.getLong("createdAt") ?: 0L)
                 )
             } ?: emptyList()
             parkings = list
@@ -898,7 +958,9 @@ private data class NearbyParking(
     val pricePerHour: Long,
     val hasEv: Boolean,
     val hasRamp: Boolean,
-    val isCovered: Boolean
+    val isCovered: Boolean,
+    // --- DODATO: timestamp kreiranja za vremenski opseg
+    val createdAt: Long
 )
 
 private fun maybeSendLocation(
