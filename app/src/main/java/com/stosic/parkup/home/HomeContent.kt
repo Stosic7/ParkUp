@@ -1,5 +1,12 @@
+// FILE 2/2: HomeContent.kt
 package com.stosic.parkup.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
@@ -41,7 +48,7 @@ import com.stosic.parkup.leaderboard.LeaderboardScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// --- DODATO: Firebase za čuvanje radijusa (bez menjanja ostalih funkcionalnosti)
+// --- DODATO: Firebase za čuvanje radijusa
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 
@@ -62,7 +69,7 @@ fun HomeContent(
         label = "trophy-press"
     )
 
-    // --- DODATO: stanje za radijus + upis u Firestore (users/{uid}.searchRadius) ---
+    // Firebase
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
@@ -70,7 +77,10 @@ fun HomeContent(
     var radiusEnabled by rememberSaveable { mutableStateOf(false) }
     var radiusMeters by rememberSaveable { mutableStateOf(500f) }
 
-    // Učitaj postojeću vrednost (ako postoji) iz users/{uid}.searchRadius
+    // NOVO: vidljivost radius bara koju diktira HomeScreen (vidljivo ako: nema detalja i nema rezervacije)
+    var showRadiusBar by rememberSaveable { mutableStateOf(true) }
+
+    // Učitaj postojeću vrednost iz users/{uid}.searchRadius
     LaunchedEffect(uid) {
         if (uid != null) {
             db.collection("users").document(uid).get().addOnSuccessListener { d ->
@@ -149,41 +159,46 @@ fun HomeContent(
             )
         }
     ) { padding ->
-        // --- DODATO: mali UI blok za radijus iznad mape; ostatak netaknut ---
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-
-            // Kontrole za radijus (opciono uključivanje)
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            // NOVO: Radius bar je animiran i veže se za showRadiusBar koji stiže iz HomeScreen
+            AnimatedVisibility(
+                visible = showRadiusBar,
+                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Pretraga u radijusu", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = radiusEnabled, onCheckedChange = { radiusEnabled = it })
-                }
-                if (radiusEnabled) {
-                    Text("Radijus: ${radiusMeters.toInt()} m", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = radiusMeters,
-                        onValueChange = { radiusMeters = it },
-                        valueRange = 100f..2000f,
-                        steps = 18
-                    )
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Pretraga u radijusu", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.weight(1f))
+                        Switch(checked = radiusEnabled, onCheckedChange = { radiusEnabled = it })
+                    }
+                    if (radiusEnabled) {
+                        Text("Radijus: ${radiusMeters.toInt()} m", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = radiusMeters,
+                            onValueChange = { radiusMeters = it },
+                            valueRange = 100f..2000f,
+                            steps = 18
+                        )
+                    }
                 }
             }
 
-            // >>> NEMA spoljnog FAB-a ovde (onaj je SCREENSKI i ugrađen u HomeScreen)
+            // Ekran sa mapom i ostalim – sada prosleđujemo callback da kontroliše vidljivost radius bara
             Box(
                 modifier = Modifier
                     .fillMaxSize()
             ) {
                 HomeScreen(
                     userEmail = userEmail,
-                    onLogout = onLogout
+                    onLogout = onLogout,
+                    onOverlayVisible = { show -> showRadiusBar = show }
                 )
             }
         }

@@ -104,9 +104,7 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
         val d = distanceMeters(userPoint.latitude(), userPoint.longitude(), p.lat, p.lng)
         if (d > maxDistanceMeters) return false
     }
-    // --- DODATO: autor + datumi ---
     if (authorQuery.isNotBlank() && !p.createdBy.contains(authorQuery, ignoreCase = true)) return false
-    // datumi se filtriraju dole u listi (jer treba inclusive-opseg na "Do"), ali i ovde ne škodi:
     return true
 }
 
@@ -116,7 +114,7 @@ private data class FocusTarget(
     val lat: Double,
     val lng: Double,
     val zoom: Double = 17.0,
-    val nonce: Long = System.currentTimeMillis() // da bi LaunchedEffect reagovao i na isti lat/lng više puta
+    val nonce: Long = System.currentTimeMillis()
 )
 
 // ---------- Screen ----------
@@ -125,7 +123,9 @@ private data class FocusTarget(
 @Composable
 fun HomeScreen(
     userEmail: String,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    // NOVO: signalizacija roditelju da li treba prikazati overlay (radius bar)
+    onOverlayVisible: (Boolean) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -169,6 +169,14 @@ fun HomeScreen(
     // recenter UI
     var showRecenter by remember { mutableStateOf(false) }
     var recenterSignal by remember { mutableStateOf<Long?>(null) }
+
+    // NOVO: držimo overlay vidljiv kad nema detalja i nema aktivne rezervacije
+    val overlayVisible = (!showDetails && reserved == null)
+
+    // NOVO: obavesti roditelja kad god se promeni stanje
+    LaunchedEffect(showDetails, reserved) {
+        onOverlayVisible(overlayVisible)
+    }
 
     Box(Modifier.fillMaxSize()) {
         MapboxMapView(
@@ -295,7 +303,6 @@ fun HomeScreen(
                             onClick = { showDetails = true },
                             modifier = Modifier.weight(1f)
                         ) { Text("Detalji") }
-
                     }
                 }
             }
@@ -347,7 +354,7 @@ fun HomeScreen(
             exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(180)) + fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(top = 64.dp, start = 8.dp, end = 8.dp) // ~ispod top bara
+                .padding(top = 64.dp, start = 8.dp, end = 8.dp)
                 .zIndex(18f)
         ) {
             Surface(
@@ -422,7 +429,10 @@ fun HomeScreen(
         ParkingDetailsScreen(
             parkingId = selected!!.id,
             parkingTitle = selected!!.title.ifBlank { "Parking" },
-            onBack = { showDetails = false },
+            onBack = {
+                showDetails = false
+                // overlayVisible će se automatski ažurirati preko LaunchedEffect
+            },
             onReserved = {
                 val justReserved = selected
                 showDetails = false
@@ -718,7 +728,6 @@ private fun MapboxMapView(
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
     var mapView: MapView? by remember { mutableStateOf(null) }
-    val lifecycleOwner = LocalLifecycleOwner.current
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
     var lastSentMillis by remember { mutableStateOf(0L) }
     val minSendIntervalMs = 10_000L
@@ -875,13 +884,14 @@ private fun MapboxMapView(
                 )
             } ?: emptyList()
             parkings = list
-            onParkingsChanged(list) // <— gurni u HomeScreen za listu
+            onParkingsChanged(list)
         }
         onDispose {
             parkingsReg?.remove(); parkingsReg = null
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, mapView) {
         val observer = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) { mapView?.onStart() }

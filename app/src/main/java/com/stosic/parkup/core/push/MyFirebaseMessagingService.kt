@@ -1,68 +1,81 @@
 package com.stosic.parkup.core.push
 
-import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
-import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.stosic.parkup.MainActivity
 import com.stosic.parkup.R
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
-    override fun onNewToken(token: String) {
-        super.onNewToken(token)
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        FirebaseFirestore.getInstance()
-            .collection("users").document(uid)
-            .update(mapOf("fcmToken" to token))
-    }
+    override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        val data = remoteMessage.data
+        val type = data["type"] // "nearby_parking" | "nearby_user" | null
 
-    override fun onMessageReceived(message: RemoteMessage) {
-        super.onMessageReceived(message)
-        val title = message.notification?.title ?: message.data["title"] ?: "ParkUp"
-        val body  = message.notification?.body  ?: message.data["body"]  ?: "Nova obaveštenja"
+        val title = data["title"] ?: remoteMessage.notification?.title ?: "ParkUp"
+        val body  = data["body"]  ?: remoteMessage.notification?.body  ?: "Nova obaveštenja"
 
-        val channelId = "parkup_nearby_channel"
-        ensureChannel(channelId)
+        // Podržimo oba slučaja bez diranja ostatka aplikacije
+        val parkingId = data["parkingId"]
+        val userId = data["userId"]
 
-        // Android 13+ zahteva runtime POST_NOTIFICATIONS
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) return // nema dozvolu -> ćutimo
+        val intent = Intent(this, MainActivity::class.java).apply {
+            // Ne remetimo postojeću navigaciju; samo prosleđujemo hint-ove
+            when (type) {
+                "nearby_parking" -> {
+                    action = "OPEN_PARKING_DETAILS"
+                    if (!parkingId.isNullOrBlank()) putExtra("parkingId", parkingId)
+                }
+                "nearby_user" -> {
+                    action = "SHOW_NEARBY_USER"
+                    if (!userId.isNullOrBlank()) putExtra("userId", userId)
+                }
+                else -> { /* default otvaranje app-a */ }
+            }
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
 
-        val notif = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_stat_parking)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val channelId = "parkup_alerts"
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            nm.getNotificationChannel(channelId) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(channelId, "ParkUp obaveštenja", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        NotificationManagerCompat.from(this)
-            .notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notif)
+        nm.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
     }
 
-    private fun ensureChannel(channelId: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(
-                channelId,
-                "Blizina parkinga",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply { description = "Obaveštenja kad si blizu slobodnog parkinga" }
-            nm.createNotificationChannel(ch)
+    override fun onNewToken(token: String) {
+        try {
+            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+            FirebaseFirestore.getInstance()
+                .collection("users").document(uid)
+                .update(mapOf("fcmToken" to token))
+        } catch (_: Exception) {
+            // Ignoriši ako nema usera u tom trenutku
         }
     }
 }
