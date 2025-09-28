@@ -13,14 +13,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,11 @@ fun AddParkingDialog(
     // --- NOVO: slika parking mesta (opciono) ---
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var photoBase64 by remember { mutableStateOf<String?>(null) }
+
+    // --- NOVO: dodatna polja ---
+    var placeType by remember { mutableStateOf("street") }      // "street" | "garage"
+    var isDisabledSpot by remember { mutableStateOf(false) }    // da li je mesto za invalide
+    var zone by remember { mutableStateOf("green") }            // "green" | "red" | "extra"
 
     fun uriToBase64(uri: Uri, maxSize: Int = 1024, quality: Int = 85): String {
         val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -187,9 +195,58 @@ fun AddParkingDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
 
-                // --- NOVO: UI za sliku ---
+                // --- NOVO: Tip lokacije (ulica / garaža) ---
+                Text("Tip lokacije", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectChip(
+                        selected = placeType == "street",
+                        label = "Ulica"
+                    ) { placeType = "street" }
+                    SelectChip(
+                        selected = placeType == "garage",
+                        label = "Garaža"
+                    ) { placeType = "garage" }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // --- NOVO: Da li je mesto za invalide ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = isDisabledSpot, onCheckedChange = { isDisabledSpot = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Mesto za invalide")
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // --- NOVO: Zona (zelena / crvena / extra) preko boja ---
+                Text("Zona", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ZoneChip(
+                        text = "Zelena",
+                        color = Color(0xFF2E7D32),
+                        selected = zone == "green"
+                    ) { zone = "green" }
+                    ZoneChip(
+                        text = "Crvena",
+                        color = Color(0xFFC62828),
+                        selected = zone == "red"
+                    ) { zone = "red" }
+                    ZoneChip(
+                        text = "Extra",
+                        color = Color(0xFFFFC107),
+                        selected = zone == "extra"
+                    ) { zone = "extra" }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // --- Slika ---
                 Text("Slika parking mesta (opciono)", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
@@ -203,13 +260,25 @@ fun AddParkingDialog(
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     when {
                         photoUri != null -> {
-                            AsyncImage(model = photoUri, contentDescription = null, modifier = Modifier.heightIn(max = 180.dp).fillMaxWidth())
+                            AsyncImage(
+                                model = photoUri,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .heightIn(max = 180.dp)
+                                    .fillMaxWidth()
+                            )
                         }
                         photoBase64 != null -> {
                             val bytes = remember(photoBase64) { Base64.decode(photoBase64, Base64.DEFAULT) }
                             val bmp = remember(bytes) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                             if (bmp != null) {
-                                Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.heightIn(max = 180.dp).fillMaxWidth())
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .heightIn(max = 180.dp)
+                                        .fillMaxWidth()
+                                )
                             }
                         }
                     }
@@ -248,7 +317,11 @@ fun AddParkingDialog(
                             lng = pick.lng,
                             pricePerHour = p,
                             capacity = capVal,
-                            photoBase64 = photoBase64 // NOVO
+                            photoBase64 = photoBase64,
+                            // --- NOVO: prosleđujemo dodatna polja ---
+                            placeType = placeType,           // "street" | "garage"
+                            isDisabledSpot = isDisabledSpot, // true | false
+                            zone = zone                      // "green" | "red" | "extra"
                         )
                         busy = false
                         if (r.isSuccess) onSaved() else {
@@ -289,6 +362,36 @@ private fun SuggestionRow(
             Text(item.secondaryText, fontSize = 12.sp)
         }
     }
+}
+
+@Composable
+private fun SelectChip(selected: Boolean, label: String, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) }
+    )
+}
+
+@Composable
+private fun ZoneChip(
+    text: String,
+    color: Color,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(text) },
+        leadingIcon = {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(color, CircleShape)
+            )
+        }
+    )
 }
 
 private data class AddressSuggestion(

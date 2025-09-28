@@ -4,12 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import com.stosic.parkup.parking.map.MapboxParkingOverlay
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -61,7 +63,6 @@ import com.mapbox.android.gestures.MoveGestureDetector
 import com.stosic.parkup.parking.ui.AddParkingFab
 import com.stosic.parkup.parking.ui.AddParkingDialog
 import com.stosic.parkup.parking.ui.ParkingDetailsScreen
-import com.stosic.parkup.parking.map.MapboxParkingOverlay
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.atan2
@@ -70,10 +71,16 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.launch
-// --- DODATO za vremenski opseg ---
+import java.text.ParseException
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
+
+// --- DODATO: geofencing za notifikacije i kada je app ugašen ---
+import android.content.BroadcastReceiver
+import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofencingClient
+import com.google.android.gms.location.GeofencingRequest
+import com.google.android.gms.location.LocationServices
 
 // ---------- Filter model ----------
 
@@ -83,15 +90,21 @@ private data class ParkingFilter(
     val hasEv: Boolean = false,
     val hasRamp: Boolean = false,
     val isCovered: Boolean = false,
+    var hasDisabledSpot : Boolean = false,
     val maxDistanceMeters: Double? = null,
-    // --- DODATO: autor + opseg datuma ---
+    // Pretraga AUTORA po EMAIL adresi:
     val authorQuery: String = "",
-    val fromDate: String = "",   // yyyy-MM-dd
-    val toDate: String = ""      // yyyy-MM-dd
+    // Datum/vreme — podržava "yyyy-MM-dd" ili "yyyy-MM-dd HH:mm"
+    val fromDate: String = "",
+    val toDate: String = ""
 ) {
     val isActive: Boolean
-        get() = onlyAvailable || maxPricePerHour != null || hasEv || hasRamp || isCovered ||
-                maxDistanceMeters != null || authorQuery.isNotBlank() || fromDate.isNotBlank() || toDate.isNotBlank()
+        get() = onlyAvailable ||
+                maxPricePerHour != null ||
+                hasEv || hasRamp || isCovered ||
+                maxDistanceMeters != null ||
+                authorQuery.isNotBlank() ||
+                fromDate.isNotBlank() || toDate.isNotBlank()
 }
 
 private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean {
@@ -104,7 +117,11 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
         val d = distanceMeters(userPoint.latitude(), userPoint.longitude(), p.lat, p.lng)
         if (d > maxDistanceMeters) return false
     }
-    if (authorQuery.isNotBlank() && !p.createdBy.contains(authorQuery, ignoreCase = true)) return false
+    // Autor preko EMAIL-a (case-insensitive)
+    if (authorQuery.isNotBlank()) {
+        val email = p.createdByEmail.lowercase()
+        if (!email.contains(authorQuery.lowercase())) return false
+    }
     return true
 }
 
@@ -124,13 +141,11 @@ private data class FocusTarget(
 fun HomeScreen(
     userEmail: String,
     onLogout: () -> Unit,
-    // NOVO: signalizacija roditelju da li treba prikazati overlay (radius bar)
     onOverlayVisible: (Boolean) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
     var showAdd by remember { mutableStateOf(false) }
-
     var selected by remember { mutableStateOf<NearbyParking?>(null) }
     var showDetails by remember { mutableStateOf(false) }
 
@@ -144,20 +159,41 @@ fun HomeScreen(
     var showFilteredList by remember { mutableStateOf(false) }
     var allParkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
 
-    // --- DODATO: parser datuma i pomoćne granice (inclusive "Do") ---
-    val sdf = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
-    fun parseDate(s: String): Long? = runCatching { sdf.parse(s)?.time }.getOrNull()
+    // Fleksibilni parser za datum/vreme
+    fun parseDateFlexible(s: String): Long? {
+        if (s.isBlank()) return null
+        val patterns = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd")
+        for (pat in patterns) {
+            try {
+                val fmt = SimpleDateFormat(pat, Locale.US)
+                fmt.isLenient = false
+                val t = fmt.parse(s)?.time
+                if (t != null) return t
+            } catch (_: ParseException) { }
+        }
+        return null
+    }
 
     val filtered = remember(allParkings, filter, lastUserPoint) {
+        // 1) osnovni filteri (dostupnost, cena, EV, rampa, natkriveno, distanca, autor-email)
         val base = allParkings.filter { filter.matches(it, lastUserPoint) }
 
-        val fromMillis = parseDate(filter.fromDate) ?: Long.MIN_VALUE
-        val toMillisIncl = (parseDate(filter.toDate)?.let { it + (24L * 60 * 60 * 1000 - 1) }) ?: Long.MAX_VALUE
+        // 2) vremenski opseg (inclusive)
+        val fromMillis = parseDateFlexible(filter.fromDate) ?: Long.MIN_VALUE
+        // Ako "to" ima SAMO datum, produži do kraja dana; ako ima i vreme, koristi tačno
+        val toRaw = parseDateFlexible(filter.toDate)
+        val toMillisIncl = if (toRaw != null) {
+            // utvrdi da li je korisnik uneo vreme (ima razmak)
+            if (filter.toDate.contains(" ")) {
+                toRaw // tačno vreme
+            } else {
+                toRaw + (24L * 60 * 60 * 1000 - 1) // do kraja dana
+            }
+        } else Long.MAX_VALUE
 
         base.filter { row ->
-            val authorOk = filter.authorQuery.isBlank() || row.createdBy.contains(filter.authorQuery, true)
             val timeOk = row.createdAt in fromMillis..toMillisIncl
-            authorOk && timeOk
+            timeOk
         }.sortedBy { p ->
             lastUserPoint?.let { distanceMeters(it.latitude(), it.longitude(), p.lat, p.lng) } ?: Double.MAX_VALUE
         }
@@ -170,13 +206,8 @@ fun HomeScreen(
     var showRecenter by remember { mutableStateOf(false) }
     var recenterSignal by remember { mutableStateOf<Long?>(null) }
 
-    // NOVO: držimo overlay vidljiv kad nema detalja i nema aktivne rezervacije
     val overlayVisible = (!showDetails && reserved == null)
-
-    // NOVO: obavesti roditelja kad god se promeni stanje
-    LaunchedEffect(showDetails, reserved) {
-        onOverlayVisible(overlayVisible)
-    }
+    LaunchedEffect(showDetails, reserved) { onOverlayVisible(overlayVisible) }
 
     Box(Modifier.fillMaxSize()) {
         MapboxMapView(
@@ -189,9 +220,7 @@ fun HomeScreen(
             userPointForFilter = lastUserPoint,
             onParkingsChanged = { list -> allParkings = list },
             focusTarget = focusTarget,
-            // NOVO: signal da je korisnik ručno pomerio mapu
             onUserMapGesture = { showRecenter = true },
-            // NOVO: signal za recentriranje kamere
             recenterSignal = recenterSignal
         )
 
@@ -217,7 +246,9 @@ fun HomeScreen(
                 .zIndex(20f)
         ) {
             Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
-                FloatingActionButton(onClick = { showFilter = true }) {
+                FloatingActionButton(onClick = {
+                    showFilter = true
+                }) {
                     Box {
                         Icon(Icons.Filled.FilterList, contentDescription = "Filter")
                         if (filter.isActive) {
@@ -234,14 +265,14 @@ fun HomeScreen(
             }
         }
 
-        // RECENTER FAB (iznad filter dugmeta)
+        // RECENTER FAB
         AnimatedVisibility(
             visible = showRecenter && !showDetails,
             enter = fadeIn(tween(180)),
             exit = fadeOut(tween(120)),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(end = 16.dp, bottom = 88.dp) // iznad filter fab-a
+                .padding(end = 16.dp, bottom = 88.dp)
                 .zIndex(21f)
         ) {
             Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
@@ -275,17 +306,13 @@ fun HomeScreen(
                 shadowElevation = 12.dp
             ) {
                 Column(Modifier.padding(16.dp)) {
-
-                    // Header: naslov + ZATVORI
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(sp.title.ifBlank { "Parking" }, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { selected = null }) {
-                            Text("Zatvori")
-                        }
+                        TextButton(onClick = { selected = null }) { Text("Zatvori") }
                     }
 
                     val now = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
@@ -294,15 +321,8 @@ fun HomeScreen(
                     Text("Slobodno: $cap", color = Color(0xFF546E7A))
                     Spacer(Modifier.height(10.dp))
 
-                    // Akcije
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Button(
-                            onClick = { showDetails = true },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Detalji") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { showDetails = true }, modifier = Modifier.weight(1f)) { Text("Detalji") }
                     }
                 }
             }
@@ -347,7 +367,7 @@ fun HomeScreen(
             }
         }
 
-        // LEVI PANEL: lista filtriranih parkinga (ispod top bara)
+        // Panel sa rezultatima (lista)
         AnimatedVisibility(
             visible = showFilteredList && !showDetails,
             enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(220)) + fadeIn(),
@@ -387,9 +407,7 @@ fun HomeScreen(
                                 .fillMaxWidth()
                                 .padding(24.dp),
                             contentAlignment = Alignment.Center
-                        ) {
-                            Text("Nema parkinga za zadate filtere.")
-                        }
+                        ) { Text("Nema parkinga za zadate filtere.") }
                     } else {
                         LazyColumn(
                             modifier = Modifier
@@ -429,10 +447,7 @@ fun HomeScreen(
         ParkingDetailsScreen(
             parkingId = selected!!.id,
             parkingTitle = selected!!.title.ifBlank { "Parking" },
-            onBack = {
-                showDetails = false
-                // overlayVisible će se automatski ažurirati preko LaunchedEffect
-            },
+            onBack = { showDetails = false },
             onReserved = {
                 val justReserved = selected
                 showDetails = false
@@ -466,7 +481,7 @@ fun HomeScreen(
                 onReset = {
                     filter = ParkingFilter()
                     showFilter = false
-                    showFilteredList = true
+                    showFilteredList = false
                 }
             )
         }
@@ -485,10 +500,12 @@ private fun FilterSheet(
     var hasRamp by remember { mutableStateOf(initial.hasRamp) }
     var isCovered by remember { mutableStateOf(initial.isCovered) }
     var maxDistText by remember { mutableStateOf(initial.maxDistanceMeters?.roundToInt()?.toString().orEmpty()) }
-    // --- DODATO: autor + opseg datuma ---
     var authorText by remember { mutableStateOf(initial.authorQuery) }
     var fromDate by remember { mutableStateOf(initial.fromDate) }
     var toDate by remember { mutableStateOf(initial.toDate) }
+    var hasDisabled by remember { mutableStateOf(initial.hasDisabledSpot) } // DODATO
+
+
 
     Column(
         modifier = Modifier
@@ -516,7 +533,7 @@ private fun FilterSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             FilterChipSwitch("EV punjač", hasEv) { hasEv = it }
             FilterChipSwitch("Rampa", hasRamp) { hasRamp = it }
-            FilterChipSwitch("Natkriveno", isCovered) { isCovered = it }
+            FilterChipSwitch("Invalidsko mesto", hasDisabled) { hasDisabled = it }
         }
 
         OutlinedTextField(
@@ -527,26 +544,26 @@ private fun FilterSheet(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // --- DODATO: autor + datum od/do ---
         OutlinedTextField(
             value = authorText,
             onValueChange = { authorText = it },
-            label = { Text("Autor (uid/email)") },
+            label = { Text("Autor (email)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = fromDate,
                 onValueChange = { fromDate = it },
-                label = { Text("Od (yyyy-MM-dd)") },
+                label = { Text("Od (yyyy-MM-dd ili yyyy-MM-dd HH:mm)") },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = toDate,
                 onValueChange = { toDate = it },
-                label = { Text("Do (yyyy-MM-dd)") },
+                label = { Text("Do (yyyy-MM-dd ili yyyy-MM-dd HH:mm)") },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
@@ -557,10 +574,7 @@ private fun FilterSheet(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedButton(
-                onClick = onReset,
-                modifier = Modifier.weight(1f)
-            ) { Text("Reset") }
+            OutlinedButton(onClick = onReset, modifier = Modifier.weight(1f)) { Text("Reset") }
             Button(
                 onClick = {
                     val new = ParkingFilter(
@@ -569,10 +583,11 @@ private fun FilterSheet(
                         hasEv = hasEv,
                         hasRamp = hasRamp,
                         isCovered = isCovered,
+                        hasDisabledSpot = hasDisabled,
                         maxDistanceMeters = maxDistText.toDoubleOrNull(),
                         authorQuery = authorText,
-                        fromDate = fromDate,
-                        toDate = toDate
+                        fromDate = fromDate.trim(),
+                        toDate = toDate.trim()
                     )
                     onApply(new)
                 },
@@ -612,8 +627,7 @@ private fun FilterResultRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier
-                .padding(12.dp),
+            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
@@ -624,6 +638,9 @@ private fun FilterResultRow(
                 val cap = item.capacity?.let { "${item.available}/$it" } ?: "${item.available}"
                 Text("Udaljenost: $distLabel", color = Color(0xFF546E7A))
                 Text("Slobodno: $cap  •  ${item.pricePerHour} RSD/h", color = Color(0xFF546E7A))
+                if (item.createdByEmail.isNotBlank()) {
+                    Text("Autor: ${item.createdByEmail}", color = Color(0xFF607D8B), fontSize = MaterialTheme.typography.bodySmall.fontSize)
+                }
             }
             TextButton(onClick = onShowOnMap) { Text("Prikaži na mapi") }
         }
@@ -644,7 +661,6 @@ private fun MapboxMapView(
     userPointForFilter: Point?,
     onParkingsChanged: (List<NearbyParking>) -> Unit,
     focusTarget: FocusTarget?,
-    // NOVO:
     onUserMapGesture: () -> Unit,
     recenterSignal: Long?
 ) {
@@ -657,7 +673,6 @@ private fun MapboxMapView(
     val userPointState by rememberUpdatedState(userPointForFilter)
 
     val notificationChannelId = remember { "nearby_events" }
-    val nm = remember(context) { NotificationManagerCompat.from(context) }
     val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     var hasNotifPermission by remember {
         mutableStateOf(
@@ -737,11 +752,51 @@ private fun MapboxMapView(
     val notifiedIds = remember { mutableStateMapOf<String, Long>() }
     var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
 
+    // Cache za email autora (uid -> email) da bi authorQuery radio i kada u parkings dokumentu nema email-a
+    val authorEmailCache = remember { mutableStateMapOf<String, String>() }
+
     var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var mapClickListener: OnMapClickListener? by remember { mutableStateOf(null) }
     var moveListener: OnMoveListener? by remember { mutableStateOf(null) }
     var followMe by remember { mutableStateOf(false) }
+
+    // --- DODATO: GeofencingClient + PendingIntent za reserved spot ---
+    val geofencingClient: GeofencingClient = remember { LocationServices.getGeofencingClient(context) }
+    val geofencePendingIntent: PendingIntent = remember {
+        val intent = Intent(context, ReservedGeofenceReceiver::class.java).apply {
+            action = "com.stosic.parkup.home.GEOFENCE_RESERVED"
+        }
+        PendingIntent.getBroadcast(
+            context,
+            1001,
+            intent,
+            (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0) or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    fun updateReservedGeofence(res: NearbyParking?) {
+        // Uvek prvo ukloni stare geofencove za ovaj PI
+        geofencingClient.removeGeofences(geofencePendingIntent)
+        if (res == null) return
+        // Zahteva ACCESS_FINE_LOCATION; za rad kada je app ugašen na Android 10+ preporučen ACCESS_BACKGROUND_LOCATION (manifest).
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+
+        val geofence = Geofence.Builder()
+            .setRequestId("${res.id}|${res.title}")
+            .setCircularRegion(res.lat, res.lng, proximityMeters.toFloat())
+            .setExpirationDuration(Geofence.NEVER_EXPIRE)
+            .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
+            .build()
+
+        val request = GeofencingRequest.Builder()
+            .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
+            .addGeofence(geofence)
+            .build()
+
+        geofencingClient.addGeofences(request, geofencePendingIntent)
+            .addOnFailureListener { /* ignoriši, nema rušenja UI-a */ }
+    }
 
     AndroidView(
         modifier = modifier,
@@ -750,7 +805,6 @@ private fun MapboxMapView(
                 mapView = this
                 getMapboxMap().loadStyleUri(Style.MAPBOX_STREETS) {
                     com.stosic.parkup.parking.map.MapboxParkingOverlay.install(this)
-
                     if (hasLocationPermission(context)) {
                         try {
                             location.updateSettings {
@@ -786,12 +840,18 @@ private fun MapboxMapView(
                             onDistanceUpdateForReserved(d)
                         }
 
-                        // notifikacije za filtrirane
-                        val eff = parkings.filter { filterState.matches(it, userPointState ?: point) }
-                        maybeNotifyNearbyParkings(
-                            context, NotificationManagerCompat.from(context), notificationChannelId,
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
-                            point, eff, proximityMeters, notifiedIds
+                        // --- IZMENJENO: obaveštavaj SAMO za REZERVISANO mesto ---
+                        maybeNotifyReservedSpotNearby(
+                            context = context,
+                            nm = NotificationManagerCompat.from(context),
+                            channelId = notificationChannelId,
+                            hasNotifPermission = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.POST_NOTIFICATIONS
+                            ) == PackageManager.PERMISSION_GRANTED,
+                            me = point,
+                            reserved = reservedSpotState,
+                            thresholdMeters = proximityMeters,
+                            notifiedIds = notifiedIds
                         )
 
                         if (followMe) {
@@ -818,7 +878,6 @@ private fun MapboxMapView(
                     }
                     mapClickListener?.let { getMapboxMap().addOnMapClickListener(it) }
 
-                    // NOVO: detekcija pomeranja mape (gesture) -> pokaži recenter dugme
                     moveListener = object : OnMoveListener {
                         override fun onMoveBegin(detector: MoveGestureDetector) {
                             followMe = false
@@ -847,7 +906,7 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
-    // NOVO: recentriranje na korisnika kada stigne signal
+    // recentriranje
     LaunchedEffect(recenterSignal, mapView, lastUserPoint) {
         val mv = mapView ?: return@LaunchedEffect
         val p = lastUserPoint ?: return@LaunchedEffect
@@ -862,33 +921,69 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
-    DisposableEffect(uid) {
+    // Real-time parkings + obogaćivanje email-om autora
+    DisposableEffect(Unit) {
         parkingsReg = db.collection("parkings").addSnapshotListener { snap, _ ->
-            val list = snap?.documents?.mapNotNull { d ->
+            val raw = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
                 val lng = d.getDouble("lng") ?: return@mapNotNull null
+                val createdBy = d.getString("createdBy") ?: "" // često UID
+                val createdByEmailField = d.getString("createdByEmail") // ako već postoji u dokumentu
+
                 NearbyParking(
                     id = d.id,
                     title = d.getString("title") ?: "Parking",
                     lat = lat,
                     lng = lng,
-                    createdBy = d.getString("createdBy") ?: "",
+                    createdBy = createdBy,
+                    createdByEmail = when {
+                        !createdByEmailField.isNullOrBlank() -> createdByEmailField
+                        createdBy.contains("@") -> createdBy // ako je već email
+                        else -> authorEmailCache[createdBy] ?: "" // proba iz keša
+                    },
                     available = (d.getLong("availableSlots") ?: 0L),
                     capacity = d.getLong("capacity"),
                     pricePerHour = (d.getLong("pricePerHour") ?: 0L),
                     hasEv = d.getBoolean("hasEv") ?: false,
                     hasRamp = d.getBoolean("hasRamp") ?: false,
                     isCovered = d.getBoolean("isCovered") ?: false,
-                    // --- DODATO: createdAt za vremenski opseg (0 ako nema)
                     createdAt = (d.getLong("createdAt") ?: 0L)
                 )
             } ?: emptyList()
-            parkings = list
-            onParkingsChanged(list)
+
+            // Pronađi UIDs kojima fali email, pa dovuci iz users/{uid}.email (jednokratno po uid-u)
+            val missingUids = raw.map { it.createdBy }
+                .filter { it.isNotBlank() && !it.contains("@") && authorEmailCache[it].isNullOrBlank() }
+                .distinct()
+
+            if (missingUids.isEmpty()) {
+                parkings = raw
+                onParkingsChanged(raw)
+            } else {
+                // dovuci u pozadini; kad dobijemo, ažuriraj keš pa osveži listu
+                missingUids.forEach { u ->
+                    db.collection("users").document(u).get()
+                        .addOnSuccessListener { ud ->
+                            val email = ud.getString("email") ?: ""
+                            if (email.isNotBlank()) authorEmailCache[u] = email
+                        }
+                        .addOnCompleteListener {
+                            // Nakon završetka svih fetch-eva, rekonstruiši listu sa email-ovima iz keša
+                            val enriched = raw.map { p ->
+                                if (p.createdByEmail.isBlank() && !p.createdBy.contains("@")) {
+                                    p.copy(createdByEmail = authorEmailCache[p.createdBy] ?: "")
+                                } else p
+                            }
+                            parkings = enriched
+                            onParkingsChanged(enriched)
+                        }
+                }
+                // Privremeno prikaži i sirovu listu (da UI ne bude prazan)
+                parkings = raw
+                onParkingsChanged(raw)
+            }
         }
-        onDispose {
-            parkingsReg?.remove(); parkingsReg = null
-        }
+        onDispose { parkingsReg?.remove(); parkingsReg = null }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -907,7 +1002,6 @@ private fun MapboxMapView(
                 positionListener = null
                 mapClickListener = null
                 moveListener = null
-                com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -921,8 +1015,12 @@ private fun MapboxMapView(
             positionListener = null
             mapClickListener = null
             moveListener = null
-            com.stosic.parkup.parking.map.MapboxParkingOverlay.cleanup()
         }
+    }
+
+    // --- DODATO: reaguj na promenu rezervacije i ažuriraj geofence ---
+    LaunchedEffect(reservedSpotState) {
+        updateReservedGeofence(reservedSpotState)
     }
 }
 
@@ -962,14 +1060,17 @@ private data class NearbyParking(
     val title: String,
     val lat: Double,
     val lng: Double,
+    // createdBy je obično UID
     val createdBy: String,
+    // email autora (za filtriranje po autoru)
+    val createdByEmail: String,
     val available: Long,
     val capacity: Long?,
     val pricePerHour: Long,
     val hasEv: Boolean,
     val hasRamp: Boolean,
     val isCovered: Boolean,
-    // --- DODATO: timestamp kreiranja za vremenski opseg
+    // timestamp kreiranja (millis)
     val createdAt: Long
 )
 
@@ -994,43 +1095,42 @@ private fun maybeSendLocation(
         .addOnSuccessListener { onSent(now) }
 }
 
-private fun maybeNotifyNearbyParkings(
+// --- NOVO: samo za REZERVISANO mesto, u foreground-u (dok je app aktivan) ---
+private fun maybeNotifyReservedSpotNearby(
     context: Context,
     nm: NotificationManagerCompat,
     channelId: String,
     hasNotifPermission: Boolean,
     me: Point,
-    parkings: List<NearbyParking>,
+    reserved: NearbyParking?,
     thresholdMeters: Double,
     notifiedIds: MutableMap<String, Long>,
 ) {
     if (!hasNotifPermission) return
     val now = System.currentTimeMillis()
-    parkings.forEach { p ->
-        if (p.available <= 0L) return@forEach
-        val dist = distanceMeters(me.latitude(), me.longitude(), p.lat, p.lng)
-        if (dist <= thresholdMeters) {
-            val key = "parking:${p.id}"
-            val last = notifiedIds[key] ?: 0L
-            if (now - last >= 120_000L) {
-                val title = "Parking u blizini"
-                val text = "${p.title} (~${dist.roundToInt()} m)"
-                val notif = NotificationCompat.Builder(context, channelId)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle(title)
-                    .setContentText(text)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setDefaults(NotificationCompat.DEFAULT_ALL)
-                    .setAutoCancel(true)
-                    .build()
-                if (ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) return
-                nm.notify(key.hashCode(), notif)
-                notifiedIds[key] = now
-            }
+    val r = reserved ?: return
+    val dist = distanceMeters(me.latitude(), me.longitude(), r.lat, r.lng)
+    if (dist <= thresholdMeters) {
+        val key = "reserved:${r.id}"
+        val last = notifiedIds[key] ?: 0L
+        if (now - last >= 120_000L) {
+            val title = "Blizu si rezervisanog parkinga"
+            val text = "${r.title.ifBlank { "Parking" }} (~${dist.roundToInt()} m)"
+            val notif = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setAutoCancel(true)
+                .build()
+            if (ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) return
+            nm.notify(key.hashCode(), notif)
+            notifiedIds[key] = now
         }
     }
 }
@@ -1046,4 +1146,49 @@ private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Doubl
             sinDLon * sinDLon
     val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
     return R * c
+}
+
+// --- NOVO: BroadcastReceiver za geofence ENTER (radi i kada je app ugašen; treba manifest entry) ---
+class ReservedGeofenceReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        // GeofencingClient šalje listu geofenci; mi koristimo prvi
+        val geofencingEvent = com.google.android.gms.location.GeofencingEvent.fromIntent(intent) ?: return
+        if (geofencingEvent.hasError()) return
+        if (geofencingEvent.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) return
+
+        val geofence = geofencingEvent.triggeringGeofences?.firstOrNull() ?: return
+        val requestId = geofence.requestId // format: "<id>|<title>"
+        val parts = requestId.split("|")
+        val id = parts.getOrNull(0) ?: "reserved"
+        val title = parts.getOrNull(1)?.ifBlank { "Parking" } ?: "Parking"
+
+        val channelId = "nearby_events"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                channelId,
+                "Blizina (ParkUp)",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(ch)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) return
+        }
+
+        val notif = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Blizu si rezervisanog parkinga")
+            .setContentText(title)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .build()
+
+        NotificationManagerCompat.from(context).notify(("reserved:$id").hashCode(), notif)
+    }
 }

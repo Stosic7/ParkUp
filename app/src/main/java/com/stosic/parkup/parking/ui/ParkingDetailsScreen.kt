@@ -18,8 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.LocalParking
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 import com.stosic.parkup.parking.data.ParkingActions
 import com.stosic.parkup.parking.data.ParkingComment
 import com.stosic.parkup.parking.data.ParkingRepository
@@ -57,7 +59,7 @@ fun ParkingDetailsScreen(
     val scope = rememberCoroutineScope()
     val uid = remember { FirebaseAuth.getInstance().currentUser?.uid }
     val context = LocalContext.current
-    val contextState = rememberUpdatedState(context) // za korišćenje u callback-ovima
+    val contextState = rememberUpdatedState(context)
 
     var avgRating by remember { mutableStateOf(0.0) }
     var myRating by remember { mutableStateOf(0) }
@@ -67,9 +69,13 @@ fun ParkingDetailsScreen(
     var pricePerHour by remember { mutableStateOf<Long?>(null) }
     var hasEv by remember { mutableStateOf(false) }
     var hasRamp by remember { mutableStateOf(false) }
-    var isCovered by remember { mutableStateOf(false) }
     var createdBy by remember { mutableStateOf<String?>(null) }
     val isCreator = remember(uid, createdBy) { uid != null && uid == createdBy }
+
+    // NOVO: polja za prikaz
+    var placeType by remember { mutableStateOf<String?>(null) } // "street" | "garage"
+    var zone by remember { mutableStateOf<String?>(null) }       // "green" | "red" | "extra"
+    var isDisabledSpot by remember { mutableStateOf<Boolean?>(null) } // NOVO
 
     // Slika parkinga (Base64)
     var photoBase64 by remember { mutableStateOf<String?>(null) }
@@ -80,7 +86,9 @@ fun ParkingDetailsScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    // Učitavanje osnovnih polja + moja ocena
+    val starColor = Color(0xFFFFC107)
+
+    // Učitavanje osnovnih polja (+ placeType/zone/isDisabledSpot)
     LaunchedEffect(parkingId) {
         val doc = db.collection("parkings").document(parkingId).get().await()
         capacity = doc.getLong("capacity")
@@ -88,21 +96,32 @@ fun ParkingDetailsScreen(
         pricePerHour = doc.getLong("pricePerHour")
         hasEv = doc.getBoolean("hasEv") ?: false
         hasRamp = doc.getBoolean("hasRamp") ?: false
-        isCovered = doc.getBoolean("isCovered") ?: false
         createdBy = doc.getString("createdBy")
         photoBase64 = doc.getString("photoBase64")
-
-        ParkingActions.getAverageRating(parkingId).onSuccess { avgRating = it }
-        if (uid != null) {
-            val rd = db.collection("parkings").document(parkingId)
-                .collection("ratings").document(uid).get().await()
-            myRating = (rd.getLong("stars") ?: 0L).toInt()
-        }
+        // NOVO:
+        placeType = doc.getString("placeType")
+        zone = doc.getString("zone")
+        isDisabledSpot = doc.getBoolean("disabledSpot")
     }
 
-    // Live komentari + avatar i moj glas
-    val authorPhotos = remember { mutableStateMapOf<String, String?>() } // uid -> photoBase64
-    val myVotes = remember { mutableStateMapOf<String, String?>() } // commentId -> "like"/"dislike"/null
+    // Live ocene
+    DisposableEffect(parkingId, uid) {
+        val ratingsReg = db.collection("parkings").document(parkingId)
+            .collection("ratings")
+            .addSnapshotListener { qs, _ ->
+                val stars = qs?.documents?.mapNotNull { it.getLong("stars")?.toInt() } ?: emptyList()
+                avgRating = if (stars.isNotEmpty()) stars.average() else 0.0
+                if (uid != null) {
+                    val me = qs?.documents?.firstOrNull { it.id == uid }?.getLong("stars")?.toInt()
+                    if (me != null) myRating = me
+                }
+            }
+        onDispose { ratingsReg.remove() }
+    }
+
+    // Live komentari + avatari + moj glas
+    val authorPhotos = remember { mutableStateMapOf<String, String?>() }
+    val myVotes = remember { mutableStateMapOf<String, String?>() }
 
     DisposableEffect(parkingId) {
         val reg = db.collection("parkings").document(parkingId)
@@ -110,14 +129,11 @@ fun ParkingDetailsScreen(
             .addSnapshotListener { snap, _ ->
                 val list = snap?.documents?.mapNotNull { it.toObject(ParkingComment::class.java) }.orEmpty()
                 comments = list.sortedByDescending { it.createdAt }
-
-                // avatari autora koji nedostaju
                 val missing = list.map { it.uid }.distinct().filter { it !in authorPhotos.keys }
                 missing.forEach { u ->
                     db.collection("users").document(u).get()
                         .addOnSuccessListener { d -> authorPhotos[u] = d.getString("photoBase64") }
                 }
-                // moj glas
                 val me = uid
                 if (me != null) {
                     list.forEach { c ->
@@ -146,7 +162,6 @@ fun ParkingDetailsScreen(
         onDispose { resReg?.remove() }
     }
 
-    // Helper: uri -> Base64
     fun uriToBase64(uri: Uri, maxSize: Int = 1280, quality: Int = 85): String {
         val ctx = contextState.value
         val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -166,7 +181,6 @@ fun ParkingDetailsScreen(
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
-    // Pickers (samo kreator)
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -366,7 +380,7 @@ fun ParkingDetailsScreen(
                 }
             }
 
-            // Naslov i info
+            // Naslov i prosek
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     parkingTitle,
@@ -388,6 +402,7 @@ fun ParkingDetailsScreen(
                 }
             }
 
+            // INFO KARTICA (uklj. tip, zona i invalidsko mesto)
             Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
                 Column(
                     Modifier
@@ -400,18 +415,117 @@ fun ParkingDetailsScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("${pricePerHour ?: 0} RSD/h", fontWeight = FontWeight.Medium)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        LabeledSwitch("EV punjač", hasEv)
-                        LabeledSwitch("Rampa", hasRamp)
-                        LabeledSwitch("Natkriveno", isCovered)
+
+                    // Za korisnike koji nisu kreator – samo informativni prikaz
+                    if (!isCreator) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            LabeledSwitch("EV punjač", hasEv)
+                            LabeledSwitch("Rampa", hasRamp)
+                        }
+                    } else {
+                        // NOVO: Kreator može menjati EV punjač i rampu (instant Firestore update)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            EditableSwitch(
+                                label = "EV punjač",
+                                checked = hasEv
+                            ) { newVal ->
+                                scope.launch {
+                                    db.collection("parkings").document(parkingId)
+                                        .set(mapOf("hasEv" to newVal), SetOptions.merge())
+                                        .await()
+                                    hasEv = newVal
+                                }
+                            }
+                            EditableSwitch(
+                                label = "Rampa",
+                                checked = hasRamp
+                            ) { newVal ->
+                                scope.launch {
+                                    db.collection("parkings").document(parkingId)
+                                        .set(mapOf("hasRamp" to newVal), SetOptions.merge())
+                                        .await()
+                                    hasRamp = newVal
+                                }
+                            }
+                        }
+                    }
+
+                    // NOVO: tip i zona (bedževi) + invalidsko mesto
+                    val zoneColor = when (zone) {
+                        "green" -> Color(0xFF2E7D32)
+                        "red" -> Color(0xFFC62828)
+                        "extra" -> Color(0xFFFFC107)
+                        else -> Color(0xFF90A4AE)
+                    }
+                    val typeLabel = when (placeType) { "garage" -> "Garaža"; else -> "Ulica" }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(
+                            onClick = { },
+                            enabled = false,
+                            label = { Text("Tip: $typeLabel") }
+                        )
+                        AssistChip(
+                            onClick = { },
+                            enabled = false,
+                            label = { Text("Zona") },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(zoneColor, CircleShape)
+                                )
+                            }
+                        )
+                        if (isDisabledSpot == true) {
+                            AssistChip(
+                                onClick = { },
+                                enabled = false,
+                                label = { Text("Invalidsko mesto") }
+                            )
+                        }
                     }
                 }
             }
 
-            // Minimalistički prikaz tvoje ocene (ostavljeno da ne diramo ostatak logike)
-            Text("Tvoja ocena: $myRating/5")
+            // ⭐⭐ Rating ⭐⭐
+            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Tvoja ocena", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        repeat(5) { idx ->
+                            val i = idx + 1
+                            IconButton(
+                                onClick = {
+                                    val me = uid ?: return@IconButton
+                                    myRating = i
+                                    db.collection("parkings").document(parkingId)
+                                        .collection("ratings").document(me)
+                                        .set(mapOf("stars" to i, "updatedAt" to System.currentTimeMillis()))
+                                }
+                            ) {
+                                val filled = (myRating) >= i
+                                Icon(
+                                    imageVector = if (filled) Icons.Filled.Star else Icons.Outlined.Star,
+                                    contentDescription = "$i",
+                                    tint = starColor
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            if (avgRating > 0) String.format("Prosek: %.1f/5", avgRating) else "Nema ocena",
+                            color = Color(0xFF546E7A)
+                        )
+                    }
+                }
+            }
 
-            // Komentari
+            // Komentari (kao ranije)
             Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
                     Text("Komentari", fontWeight = FontWeight.SemiBold)
@@ -447,7 +561,7 @@ fun ParkingDetailsScreen(
                             myVote = myVote,
                             isMine = (uid == c.uid),
                             onVote = { vote ->
-                                if (uid == c.uid) return@CommentRow // self-vote zabranjen
+                                if (uid == c.uid) return@CommentRow
                                 scope.launch {
                                     ParkingActions.voteComment(parkingId, c.id, c.uid, vote)
                                 }
@@ -468,7 +582,7 @@ private fun LabeledSwitch(label: String, value: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Switch(
             checked = value,
-            onCheckedChange = { _: Boolean -> }, // eksplicitan parametar, disabled
+            onCheckedChange = { _: Boolean -> },
             enabled = false
         )
         Spacer(Modifier.width(6.dp))
@@ -478,8 +592,22 @@ private fun LabeledSwitch(label: String, value: Boolean) {
 }
 
 @Composable
+private fun EditableSwitch(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Switch(checked = checked, onCheckedChange = onChange)
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontWeight = FontWeight.Medium)
+        Text("  (izmene se čuvaju odmah)", color = Color(0xFF78909C), fontSize = 12.sp)
+    }
+}
+
+@Composable
 private fun CommentRow(
-    item: ParkingComment,
+    item: com.stosic.parkup.parking.data.ParkingComment,
     authorPhotoBase64: String?,
     myVote: String?, // "like", "dislike", ili null
     isMine: Boolean,
@@ -492,7 +620,7 @@ private fun CommentRow(
         color = Color(0xFFF9FBFF)
     ) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Avatar (profilna)
+            // Avatar
             Box(
                 modifier = Modifier
                     .size(36.dp)
@@ -516,7 +644,6 @@ private fun CommentRow(
                 Text("👍 ${item.likes}   👎 ${item.dislikes}", fontSize = 12.sp, color = Color(0xFF607D8B))
             }
 
-            // Dugmad za glasanje
             val likeDisabled = isMine || myVote == "like"
             val dislikeDisabled = isMine || myVote == "dislike"
             TextButton(onClick = { onVote("like") }, enabled = !likeDisabled) { Text("Like") }

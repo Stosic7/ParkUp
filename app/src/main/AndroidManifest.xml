@@ -30,6 +30,11 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Geofence receiver za rezervisano mesto -->
+        <receiver
+            android:name=".home.ReservedGeofenceReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

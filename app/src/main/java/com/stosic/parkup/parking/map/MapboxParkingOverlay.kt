@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.mapbox.geojson.Feature
@@ -86,6 +88,7 @@ object MapboxParkingOverlay {
             iconIgnorePlacement(true)
             iconAnchor(IconAnchor.BOTTOM)
             iconImage(IMG_GREEN)
+            iconSize(2.35)
             textField("{label}")
             textOffset(listOf(0.0, 1.2))
             textSize(11.0)
@@ -95,6 +98,7 @@ object MapboxParkingOverlay {
             iconIgnorePlacement(true)
             iconAnchor(IconAnchor.BOTTOM)
             iconImage(IMG_RED)
+            iconSize(2.35)
             textField("{label}")
             textOffset(listOf(0.0, 1.2))
             textSize(11.0)
@@ -181,12 +185,40 @@ object MapboxParkingOverlay {
         srcRedRef?.featureCollection(FeatureCollection.fromFeatures(redFeats))
     }
 
+    // IZMENJENO: umesto kruga crtamo zastavicu (anchor je BOTTOM, pa je dno jarbola na dnu bitmape)
     private fun createCircleBitmap(color: Int, size: Int = 64): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
-        val r = size / 2f
-        c.drawCircle(r, r, r, p)
+
+        // Jarbol
+        val polePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.parseColor("#424242") }
+        val poleWidth = size * 0.10f
+        val poleLeft = size * 0.45f - poleWidth / 2f
+        val poleRight = poleLeft + poleWidth
+        val poleTop = size * 0.10f
+        val poleBottom = size * 0.98f
+        val poleRect = RectF(poleLeft, poleTop, poleRight, poleBottom)
+        c.drawRoundRect(poleRect, poleWidth / 2f, poleWidth / 2f, polePaint)
+
+        // Zastavica (trougao na desnu stranu)
+        val flagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+        val flagTopY = size * 0.18f
+        val flagMidY = size * 0.36f
+        val flagRightX = size * 0.88f
+        val poleX = (poleLeft + poleRight) / 2f
+
+        val path = Path().apply {
+            moveTo(poleX, flagTopY)
+            lineTo(flagRightX, flagMidY)
+            lineTo(poleX, flagMidY + (flagMidY - flagTopY))
+            close()
+        }
+        c.drawPath(path, flagPaint)
+
+        // Baza jarbola (diskretna senka)
+        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.parseColor("#303030") }
+        c.drawCircle(poleX, poleBottom, poleWidth * 0.35f, basePaint)
+
         return bmp
     }
 

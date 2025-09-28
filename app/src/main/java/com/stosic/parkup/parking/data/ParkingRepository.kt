@@ -18,7 +18,10 @@ data class ParkingSpot(
     val capacity: Long = 0L,
     val availableSlots: Long = 0L,
     val pricePerHour: Long = 0L,
-    val photoBase64: String? = null // NOVO
+    val photoBase64: String? = null,          // NOVO
+    val placeType: String = "street",         // NOVO: "street" | "garage"
+    val isDisabledSpot: Boolean = false,      // NOVO: da li je mesto za invalide
+    val zone: String = "green"                // NOVO: "green" | "red" | "extra"
 )
 
 object ParkingRepository {
@@ -32,7 +35,10 @@ object ParkingRepository {
         lng: Double,
         pricePerHour: Long = 0L,
         capacity: Long = 0L,
-        photoBase64: String? = null // NOVO
+        photoBase64: String? = null,          // NOVO
+        placeType: String = "street",         // NOVO (UI šalje "street"/"garage")
+        isDisabledSpot: Boolean = false,      // NOVO
+        zone: String = "green"                // NOVO ("green"/"red"/"extra")
     ): Result<String> {
         return try {
             val uid = auth.currentUser?.uid ?: throw Exception("Not logged in")
@@ -46,6 +52,7 @@ object ParkingRepository {
             } else {
                 val doc = db.collection("parkings").document()
                 val cap = if (capacity < 0) 0L else capacity
+
                 val spot = ParkingSpot(
                     id = doc.id,
                     title = title.trim(),
@@ -56,8 +63,12 @@ object ParkingRepository {
                     pricePerHour = pricePerHour,
                     capacity = cap,
                     availableSlots = cap,
-                    photoBase64 = photoBase64
+                    photoBase64 = photoBase64,
+                    placeType = placeType,
+                    isDisabledSpot = isDisabledSpot,
+                    zone = zone
                 )
+
                 doc.set(spot).await()
                 AuthRepository.addPoints(uid, 10)
                 AuthRepository.incrementParkingCount(uid, 1)
