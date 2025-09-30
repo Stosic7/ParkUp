@@ -26,6 +26,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.StarHalf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -62,7 +65,7 @@ fun ParkingDetailsScreen(
     val contextState = rememberUpdatedState(context)
 
     var avgRating by remember { mutableStateOf(0.0) }
-    var myRating by remember { mutableStateOf(0) }
+    var myRating by remember { mutableStateOf(0.0) }
     var comments by remember { mutableStateOf<List<ParkingComment>>(emptyList()) }
     var capacity by remember { mutableStateOf<Long?>(null) }
     var available by remember { mutableStateOf<Long?>(null) }
@@ -70,6 +73,7 @@ fun ParkingDetailsScreen(
     var hasEv by remember { mutableStateOf(false) }
     var hasRamp by remember { mutableStateOf(false) }
     var createdBy by remember { mutableStateOf<String?>(null) }
+    var creatorName by remember { mutableStateOf<String?>(null) }
     val isCreator = remember(uid, createdBy) { uid != null && uid == createdBy }
 
     // NOVO: polja za prikaz
@@ -104,15 +108,27 @@ fun ParkingDetailsScreen(
         isDisabledSpot = doc.getBoolean("disabledSpot")
     }
 
+    LaunchedEffect(createdBy) {
+        val c = createdBy ?: return@LaunchedEffect
+        val doc = db.collection("users").document(c).get().await()
+        val ime = doc.getString("ime") ?: ""
+        val prezime = doc.getString("prezime") ?: ""
+        creatorName = listOf(ime, prezime).filter { it.isNotBlank() }.joinToString(" ").ifBlank { c }
+    }
+
     // Live ocene
     DisposableEffect(parkingId, uid) {
         val ratingsReg = db.collection("parkings").document(parkingId)
             .collection("ratings")
             .addSnapshotListener { qs, _ ->
-                val stars = qs?.documents?.mapNotNull { it.getLong("stars")?.toInt() } ?: emptyList()
+                val stars = qs?.documents?.mapNotNull {
+                    it.getDouble("stars") ?: it.getLong("stars")?.toDouble()
+                } ?: emptyList()
                 avgRating = if (stars.isNotEmpty()) stars.average() else 0.0
                 if (uid != null) {
-                    val me = qs?.documents?.firstOrNull { it.id == uid }?.getLong("stars")?.toInt()
+                    val me = qs?.documents
+                        ?.firstOrNull { it.id == uid }
+                        ?.let { it.getDouble("stars") ?: it.getLong("stars")?.toDouble() }
                     if (me != null) myRating = me
                 }
             }
@@ -314,6 +330,14 @@ fun ParkingDetailsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            if (creatorName != null) {
+                Text(
+                    text = "Creator: ${creatorName}",
+                    color = Color(0xFF546E7A),
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
             // Slika (header)
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -487,7 +511,7 @@ fun ParkingDetailsScreen(
                 }
             }
 
-            // ⭐⭐ Rating ⭐⭐
+            // Rating
             Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
                 Column(
                     Modifier
@@ -495,32 +519,74 @@ fun ParkingDetailsScreen(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Tvoja ocena", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        repeat(5) { idx ->
-                            val i = idx + 1
-                            IconButton(
-                                onClick = {
-                                    val me = uid ?: return@IconButton
-                                    myRating = i
-                                    db.collection("parkings").document(parkingId)
-                                        .collection("ratings").document(me)
-                                        .set(mapOf("stars" to i, "updatedAt" to System.currentTimeMillis()))
+                    if (!isCreator) {
+                        Text("Tvoja ocena", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            repeat(5) { idx ->
+                                val i = idx + 1
+                                val icon = when {
+                                    myRating >= i       -> Icons.Filled.Star
+                                    myRating >= i - 0.5 -> Icons.Filled.StarHalf
+                                    else                -> Icons.Outlined.Star
                                 }
-                            ) {
-                                val filled = (myRating) >= i
-                                Icon(
-                                    imageVector = if (filled) Icons.Filled.Star else Icons.Outlined.Star,
-                                    contentDescription = "$i",
-                                    tint = starColor
-                                )
+                                val tint = if (myRating >= i - 0.5) Color(0xFFFFC107) else Color(0xFFB0BEC5)
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .pointerInput(i) {
+                                            detectTapGestures { offset ->
+                                                val me = uid ?: return@detectTapGestures
+                                                val half = offset.x < size.width / 2f
+                                                val newRating = if (half) i - 0.5 else i.toDouble()
+                                                myRating = newRating
+                                                db.collection("parkings").document(parkingId)
+                                                    .collection("ratings").document(me)
+                                                    .set(mapOf("stars" to newRating, "updatedAt" to System.currentTimeMillis()))
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(imageVector = icon, contentDescription = "$i", tint = tint)
+                                }
                             }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                if (avgRating > 0) String.format("Prosek: %.1f/5", avgRating) else "Nema ocena",
+                                color = Color(0xFF546E7A)
+                            )
                         }
-                        Spacer(Modifier.width(12.dp))
+                    } else {
+                        // KREATOR: zaključano (blede zvezdice, bez pointerInput)
                         Text(
-                            if (avgRating > 0) String.format("Prosek: %.1f/5", avgRating) else "Nema ocena",
+                            "Kao kreator, ne možeš da ocenjuješ sopstveni parking.",
                             color = Color(0xFF546E7A)
                         )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            repeat(5) { idx ->
+                                val i = idx + 1
+                                val icon = when {
+                                    avgRating >= i       -> Icons.Filled.Star
+                                    avgRating >= i - 0.5 -> Icons.Filled.StarHalf
+                                    else                 -> Icons.Outlined.Star
+                                }
+                                // bleđa siva
+                                val tint = Color(0xFFCFD8DC)
+                                Box(
+                                    modifier = Modifier.size(36.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(imageVector = icon, contentDescription = "$i", tint = tint)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                if (avgRating > 0) String.format("Prosek: %.1f/5", avgRating) else "Nema ocena",
+                                color = Color(0xFF546E7A)
+                            )
+                        }
                     }
                 }
             }

@@ -141,9 +141,11 @@ private data class FocusTarget(
 fun HomeScreen(
     userEmail: String,
     onLogout: () -> Unit,
-    onOverlayVisible: (Boolean) -> Unit = {}
+    onOverlayVisible: (Boolean) -> Unit = {},
+    onUiLockedChange: (Boolean) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
 
     var showAdd by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<NearbyParking?>(null) }
@@ -208,6 +210,7 @@ fun HomeScreen(
 
     val overlayVisible = (!showDetails && reserved == null)
     LaunchedEffect(showDetails, reserved) { onOverlayVisible(overlayVisible) }
+    LaunchedEffect(reserved) { onUiLockedChange(reserved != null) }
 
     Box(Modifier.fillMaxSize()) {
         MapboxMapView(
@@ -226,7 +229,7 @@ fun HomeScreen(
 
         // ADD FAB
         AnimatedVisibility(
-            visible = !showDetails,
+            visible = !showDetails && reserved == null,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(start = 16.dp, bottom = 16.dp)
@@ -239,7 +242,7 @@ fun HomeScreen(
 
         // FILTER FAB (sa tačkicom kad je aktivan)
         AnimatedVisibility(
-            visible = !showDetails,
+            visible = !showDetails && reserved == null,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(end = 16.dp, bottom = 16.dp)
@@ -456,6 +459,22 @@ fun HomeScreen(
                 lastUserPoint?.let { p ->
                     justReserved?.let { r ->
                         reservedDistanceMeters = distanceMeters(p.latitude(), p.longitude(), r.lat, r.lng)
+                        val mePoint = lastUserPoint
+                        if (mePoint != null) {
+                            maybeNotifyReservedSpotNearby(
+                                context = ctx,
+                                nm = NotificationManagerCompat.from(ctx),
+                                channelId = "nearby_events",
+                                hasNotifPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                                    ctx, android.Manifest.permission.POST_NOTIFICATIONS
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+                                me = mePoint,
+                                reserved = justReserved,
+                                thresholdMeters = 150.0,
+                                // lokalna mapa za rate-limit; foreground poziv je jednokratan
+                                notifiedIds = mutableMapOf()
+                            )
+                        }
                     }
                 }
             },
@@ -845,9 +864,7 @@ private fun MapboxMapView(
                             context = context,
                             nm = NotificationManagerCompat.from(context),
                             channelId = notificationChannelId,
-                            hasNotifPermission = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) == PackageManager.PERMISSION_GRANTED,
+                            hasNotifPermission = hasNotifPermission,
                             me = point,
                             reserved = reservedSpotState,
                             thresholdMeters = proximityMeters,
@@ -1124,9 +1141,9 @@ private fun maybeNotifyReservedSpotNearby(
                 .setDefaults(NotificationCompat.DEFAULT_ALL)
                 .setAutoCancel(true)
                 .build()
-            if (ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) return
             nm.notify(key.hashCode(), notif)

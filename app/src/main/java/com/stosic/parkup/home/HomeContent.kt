@@ -63,6 +63,7 @@ fun HomeContent(
     var showLeaderboard by remember { mutableStateOf(false) }
     var animateTrophy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var uiLocked by rememberSaveable { mutableStateOf(false) }
     val trophyScale by animateFloatAsState(
         targetValue = if (animateTrophy) 1.15f else 1f,
         animationSpec = spring(stiffness = 400f),
@@ -121,6 +122,7 @@ fun HomeContent(
             CenterAlignedTopAppBar(
                 navigationIcon = {
                     IconButton(
+                        enabled = !uiLocked,
                         onClick = {
                             scope.launch {
                                 animateTrophy = true
@@ -151,7 +153,7 @@ fun HomeContent(
                     )
                 },
                 actions = {
-                    IconButton(onClick = { showProfile = true }) {
+                    IconButton(enabled = !uiLocked, onClick = { showProfile = true }) {
                         Icon(imageVector = Icons.Filled.Person, contentDescription = "Profil", tint = Color.White)
                     }
                 },
@@ -198,7 +200,8 @@ fun HomeContent(
                 HomeScreen(
                     userEmail = userEmail,
                     onLogout = onLogout,
-                    onOverlayVisible = { show -> showRadiusBar = show }
+                    onOverlayVisible = { show -> showRadiusBar = show },
+                    onUiLockedChange = { locked -> uiLocked = locked }
                 )
             }
         }
