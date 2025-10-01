@@ -247,3 +247,69 @@ exports.notifyNearbyUser = functions.firestore
       }
       return null;
     });
+
+  exports.onUserPointsChange = functions.firestore
+    .document("users/{uid}")
+    .onWrite(async (change, context) => {
+      const beforePoints = change.before.exists ? (change.before.get("points") || 0) : null;
+      const afterPoints  = change.after.exists  ? (change.after.get("points")  || 0) : null;
+
+      // Nema promene poena → nema posla
+      if (beforePoints === afterPoints) return null;
+
+      console.log(`[Ranks] Points changed for ${context.params.uid}: ${beforePoints} -> ${afterPoints}`);
+
+      // Povuci SVE korisnike sortirane po points DESC
+      const snap = await db.collection("users").orderBy("points", "desc").get();
+
+      // Batch-uj update rank polja: prvi dobija 1, drugi 2, ...
+      const BATCH_SIZE = 400; // < 500 da izbegnemo limit
+      let batch = db.batch();
+      let ops = 0;
+      let rank = 1;
+
+      for (const doc of snap.docs) {
+        batch.update(doc.ref, { rank }); // SAMO server piše "rank" (vidi rules)
+        rank++;
+        ops++;
+
+        if (ops >= BATCH_SIZE) {
+          await batch.commit();
+          batch = db.batch();
+          ops = 0;
+        }
+      }
+      if (ops > 0) await batch.commit();
+
+      console.log(`[Ranks] Recomputed for ${rank - 1} users.`);
+      return null;
+    });
+
+  // 2) Callable: ručni recompute — pozoveš jednom da popuniš svima odmah
+  exports.recomputeRanks = functions.https.onCall(async (_data, context) => {
+    // (Opcionalno) provera da li je pozivač admin — dodaj po potrebi
+    console.log("[Ranks] Manual recompute triggered.");
+
+    const snap = await db.collection("users").orderBy("points", "desc").get();
+
+    const BATCH_SIZE = 400;
+    let batch = db.batch();
+    let ops = 0;
+    let rank = 1;
+
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, { rank });
+      rank++;
+      ops++;
+
+      if (ops >= BATCH_SIZE) {
+        await batch.commit();
+        batch = db.batch();
+        ops = 0;
+      }
+    }
+    if (ops > 0) await batch.commit();
+
+    console.log(`[Ranks] Manual recompute done for ${rank - 1} users.`);
+    return { updated: rank - 1 };
+  });

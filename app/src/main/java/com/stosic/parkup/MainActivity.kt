@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.firebase.auth.FirebaseAuth
+import com.stosic.parkup.core.RankAutoUpdater
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
@@ -42,12 +43,10 @@ class MainActivity : ComponentActivity() {
     private val auth by lazy { FirebaseAuth.getInstance() }
     private val db by lazy { FirebaseFirestore.getInstance() }
 
-    // Tražimo permisije (ne diramo UI dok to radimo)
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         maybeStartLocationService()
-        // Post notifications permission rezultat nam ne treba ovde – FCM servis već proverava.
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,8 +68,10 @@ class MainActivity : ComponentActivity() {
                     db.collection("users").document(user.uid)
                         .update(mapOf("fcmToken" to token))
                 }
+                RankAutoUpdater.start()
                 maybeStartLocationService()
             } else {
+                RankAutoUpdater.stop()
                 stopService(Intent(this, LocationUpdatesService::class.java))
             }
         }
@@ -235,7 +236,13 @@ fun AuthHost() {
         "home" -> HomeContent(
             userEmail = auth.currentUser?.email ?: "Unknown",
             userData = userData?.mapValues { it.value.toString() },
-            onLogout = { auth.signOut(); screen = "start"; userData = null }
+            onLogout = {
+                RankAutoUpdater.stop()
+
+                auth.signOut()
+                screen = "start"
+                userData = null
+            }
         )
     }
 }
