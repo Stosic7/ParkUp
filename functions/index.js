@@ -32,13 +32,6 @@ async function sendFCM({ token, title, body, data }) {
   }
 }
 
-/**
- * Trigger: svaka promena na users/{uid}
- * Očekuje polja: lat, lng, fcmToken (opciono)
- * Logika:
- *  - Nađe aktivne parkinge sa availableSlots > 0 u krugu ≤ 150 m
- *  - Cooldown po korisniku i parkingu: 2h (users/{uid}/nearby/{parkingId}.notifiedAt)
- */
 exports.notifyNearbyParking = functions.firestore
   .document("users/{uid}")
   .onWrite(async (change, context) => {
@@ -184,3 +177,73 @@ exports.notifyNearbyUser = functions.firestore
     await best.ref.set({ notifiedAt: now }, { merge: true });
     return null;
   });
+
+  function onlyRankChanged(change) {
+    if (!change.before.exists || !change.after.exists) return false;
+    const before = change.before.data() || {};
+    const after  = change.after.data() || {};
+    const changed = Object.keys(after).filter(
+      (k) => JSON.stringify(after[k]) !== JSON.stringify(before[k])
+    );
+    return changed.length === 1 && changed[0] === "rank";
+  }
+
+  /** Pročitaj sve users, sort po points (DESC), pa upiši rank (1-based). */
+  async function recomputeAllRanks() {
+    const snap = await db.collection("users").get();
+
+    const users = snap.docs.map((d) => {
+      const u = d.data() || {};
+      const first = (u.ime || "").toString();
+      const last  = (u.prezime || "").toString();
+      const email = (u.email || "").toString();
+      const nameKey = `${first} ${last}`.trim() || email;
+      const points = Number.isFinite(u.points) ? u.points : 0;
+      return { ref: d.ref, points, nameKey };
+    });
+
+    users.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points; // poeni opadajuće
+      return a.nameKey.localeCompare(b.nameKey, "sr", { sensitivity: "base" });
+    });
+
+    // batch u turama (da ne probijemo limit)
+    let batch = db.batch();
+    let ops = 0;
+    for (let i = 0; i < users.length; i++) {
+      const rank = i + 1;
+      batch.update(users[i].ref, { rank });
+      if (++ops >= 450) {
+        await batch.commit();
+        batch = db.batch();
+        ops = 0;
+      }
+    }
+    if (ops > 0) await batch.commit();
+  }
+
+  /** Trigger: svaka promena users/{uid}. Ako nije samo `rank`, preracunaj sve. */
+  exports.recomputeRanksOnWrite = functions.firestore
+    .document("users/{uid}")
+    .onWrite(async (change) => {
+      if (onlyRankChanged(change)) return null;
+      try {
+        await recomputeAllRanks();
+      } catch (e) {
+        console.error("recomputeAllRanks error", e);
+      }
+      return null;
+    });
+
+  /** CRON: sigurnosna mreža – presloži na svaka 2h. */
+  exports.recomputeRanksCron = functions.pubsub
+    .schedule("every 2 hours")
+    .timeZone("UTC")
+    .onRun(async () => {
+      try {
+        await recomputeAllRanks();
+      } catch (e) {
+        console.error("recomputeAllRanks (cron) error", e);
+      }
+      return null;
+    });

@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
@@ -20,6 +21,21 @@ import com.stosic.parkup.auth.ui.StartingScreen
 import com.stosic.parkup.core.location.LocationUpdatesService
 import com.stosic.parkup.home.HomeContent
 import com.stosic.parkup.ui.CustomPopup
+
+// dodatci za fullscreen splash (samo MainActivity menjamo)
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -36,7 +52,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { AuthHost() }
+        setContent { AppRoot() } // <-- umesto AuthHost()
 
         // 1) Traži FINE_LOCATION (+ POST_NOTIFICATIONS za Android 13+)
         val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -64,6 +80,40 @@ class MainActivity : ComponentActivity() {
         val user = auth.currentUser ?: return
         val intent = Intent(this, LocationUpdatesService::class.java)
         ContextCompat.startForegroundService(this, intent)
+    }
+}
+
+@Composable
+fun AppRoot() {
+    // kratko zadržavanje ekrana sa slikom preko celog ekrana
+    var showSplash by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        delay(0) // po potrebi promeni trajanje
+        showSplash = false
+    }
+    if (showSplash) {
+        FullscreenSplash()
+    } else {
+        AuthHost()
+    }
+}
+
+@Composable
+fun FullscreenSplash() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colorResource(id = R.color.splash_background)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.logo2),
+            contentDescription = "ParkUp",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            contentScale = ContentScale.Fit
+        )
     }
 }
 

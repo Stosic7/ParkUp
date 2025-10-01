@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.ParkUp" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.ParkUp" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Backport Splash atribute -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/transparent_splash</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="windowSplashScreenIconBackgroundColor">@null</item>
+    </style>
+
 </resources>

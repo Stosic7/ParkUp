@@ -12,7 +12,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.res.painterResource
+import com.stosic.parkup.R
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -144,12 +149,11 @@ fun HomeContent(
                     }
                 },
                 title = {
-                    Text(
-                        "ParkUp",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        fontStyle = FontStyle.Italic
+                    Image(
+                        painter = painterResource(id = R.drawable.logo1),
+                        contentDescription = "ParkUp",
+                        modifier = Modifier.height(28.dp),
+                        contentScale = ContentScale.Fit
                     )
                 },
                 actions = {

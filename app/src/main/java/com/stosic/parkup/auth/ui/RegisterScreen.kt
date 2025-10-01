@@ -7,6 +7,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Patterns
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,10 +52,13 @@ fun RegisterScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
+    fun isValidEmail(e: String): Boolean = Patterns.EMAIL_ADDRESS.matcher(e).matches()
+    val emailValid by remember(email) { mutableStateOf(isValidEmail(email)) }
+
 
     val canSubmit = ime.isNotBlank() &&
             prezime.isNotBlank() &&
-            email.isNotBlank() &&
+            email.isNotBlank() && emailValid &&
             password.length >= 6 &&
             telefon.isNotBlank()
 
@@ -201,6 +205,13 @@ fun RegisterScreen(
             LabeledField("Name", ime, { ime = it }, "Enter your name", container = BlueField, outline = Outline, textColor = Dark)
             LabeledField("Last Name", prezime, { prezime = it }, "Enter your last name", container = BlueField, outline = Outline, textColor = Dark)
             LabeledField("Email", email, { email = it }, "Enter email address", container = BlueField, outline = Outline, textColor = Dark)
+            if (email.isNotBlank() && !emailValid) {
+                Text(
+                    "Nevažeći email format (mora biti nesto@domen.tld).",
+                    color = Color(0xFFFFCACA),
+                    fontSize = 12.sp
+                )
+            }
             LabeledField("Password", password, { password = it }, "Enter password", isPassword = true, container = BlueField, outline = Outline, textColor = Dark)
             LabeledField("Phone Number", telefon, { telefon = it }, "Enter phone number", container = BlueField, outline = Outline, textColor = Dark)
 

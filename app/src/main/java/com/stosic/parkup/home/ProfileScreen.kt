@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material.icons.filled.Edit
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -49,6 +50,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.tasks.await
+import androidx.compose.material.icons.filled.Close
 import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalMaterial3Api::class)
@@ -72,6 +74,13 @@ fun ProfileScreen(
     var photoBase64 by remember { mutableStateOf("") }
 
     var bio by remember { mutableStateOf("") }
+    var isEditingBio by remember { mutableStateOf(false) }
+    var bioDraft by remember { mutableStateOf(bio) }
+    var savingBio by remember { mutableStateOf(false) }
+
+    LaunchedEffect(bio, isEditingBio) {
+        if (!isEditingBio) bioDraft = bio
+    }
     var points by remember { mutableStateOf(0L) }
     var rank by remember { mutableStateOf(0L) }
     var parkingCount by remember { mutableStateOf(0L) }
@@ -330,6 +339,87 @@ fun ProfileScreen(
                     onClick = { takePhoto.launch(null) },
                     enabled = !isUploading
                 ) { Text(if (isUploading) "Učitavam..." else "Uslikaj (Kamera)") }
+            }
+
+            // --- BIO bubble ---
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(Modifier.fillMaxWidth()) {
+                    // Olovka gore desno (samo kada ne editujemo)
+                    if (!isEditingBio) {
+                        IconButton(
+                            onClick = { if (uid != null) isEditingBio = true },
+                            enabled = uid != null,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp)
+                        ) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Uredi bio", tint = Color(0xFF546E7A))
+                        }
+                    }
+
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("O meni", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
+
+                        if (isEditingBio) {
+                            OutlinedTextField(
+                                value = bioDraft,
+                                onValueChange = { bioDraft = it },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 100.dp),
+                                placeholder = { Text("Napiši nešto o sebi...") },
+                                singleLine = false,
+                                maxLines = 6
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (uid == null) return@Button
+                                        savingBio = true
+                                        val finalText = bioDraft.trim()
+                                        FirebaseFirestore.getInstance()
+                                            .collection("users").document(uid)
+                                            .update("bio", finalText)
+                                            .addOnSuccessListener {
+                                                // lokalno osveži
+                                                // (snapshot listener će ionako dohvatiti, ali odmah ažuriramo UI)
+                                                savingBio = false
+                                                isEditingBio = false
+                                            }
+                                            .addOnFailureListener {
+                                                savingBio = false
+                                            }
+                                    },
+                                    enabled = !savingBio && uid != null
+                                ) { Text(if (savingBio) "Čuvam..." else "Sačuvaj") }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        // otkaži izmene – vrati na original i zatvori edit
+                                        bioDraft = bio
+                                        isEditingBio = false
+                                    },
+                                    enabled = !savingBio
+                                ) { Text("Otkaži") }
+                            }
+                        } else {
+                            // prikaz bio teksta (ili placeholder)
+                            val shown = bio.takeIf { it.isNotBlank() } ?: "Nije dodato ništa o korisniku."
+                            Text(
+                                shown,
+                                color = Color(0xFF37474F),
+                                lineHeight = 20.sp
+                            )
+                        }
+                    }
+                }
             }
 
             StatsCard(points = points, rank = rank, parkingCount = parkingCount)

@@ -626,10 +626,11 @@ fun ParkingDetailsScreen(
                             authorPhotoBase64 = avatarB64,
                             myVote = myVote,
                             isMine = (uid == c.uid),
-                            onVote = { vote ->
+                            onVote = { target ->
                                 if (uid == c.uid) return@CommentRow
                                 scope.launch {
-                                    ParkingActions.voteComment(parkingId, c.id, c.uid, vote)
+                                    // target je: "like", "dislike" ili "none" (UNDO)
+                                    ParkingActions.voteComment(parkingId, c.id, c.uid, target)
                                 }
                             }
                         )
@@ -677,7 +678,7 @@ private fun CommentRow(
     authorPhotoBase64: String?,
     myVote: String?, // "like", "dislike", ili null
     isMine: Boolean,
-    onVote: (vote: String) -> Unit
+    onVote: (vote: String) -> Unit // prosleđuje "like" | "dislike" | "none"
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -710,10 +711,29 @@ private fun CommentRow(
                 Text("👍 ${item.likes}   👎 ${item.dislikes}", fontSize = 12.sp, color = Color(0xFF607D8B))
             }
 
-            val likeDisabled = isMine || myVote == "like"
-            val dislikeDisabled = isMine || myVote == "dislike"
-            TextButton(onClick = { onVote("like") }, enabled = !likeDisabled) { Text("Like") }
-            TextButton(onClick = { onVote("dislike") }, enabled = !dislikeDisabled) { Text("Dislike") }
+            // NOVO: Logika enable/disable i UNDO
+            // - Ako je korisnik autor komentara => sve zaključano
+            // - Ako je neutralno (null) => oba enable
+            // - Ako je "like" => Like enable (za UNDO), Dislike disable
+            // - Ako je "dislike" => Dislike enable (za UNDO), Like disable
+            val likeEnabled = !isMine && myVote != "dislike"
+            val dislikeEnabled = !isMine && myVote != "like"
+
+            TextButton(
+                onClick = {
+                    val target = if (myVote == "like") "none" else "like"
+                    onVote(target)
+                },
+                enabled = likeEnabled
+            ) { Text("Like") }
+
+            TextButton(
+                onClick = {
+                    val target = if (myVote == "dislike") "none" else "dislike"
+                    onVote(target)
+                },
+                enabled = dislikeEnabled
+            ) { Text("Dislike") }
         }
     }
 }

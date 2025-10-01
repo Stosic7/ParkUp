@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="128dp"
+    android:insetRight="128dp"
+    android:insetTop="128dp"
+    android:insetBottom="128dp">
+
+    <bitmap
+        android:src="@drawable/logo2"
+        android:gravity="center"
+        android:antialias="true"
+        android:filter="true"/>
+</inset>
