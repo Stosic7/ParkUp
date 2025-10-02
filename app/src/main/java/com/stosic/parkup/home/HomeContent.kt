@@ -9,53 +9,44 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.height
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
 import androidx.compose.ui.res.painterResource
-import com.stosic.parkup.R
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.TableRows
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Slider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.stosic.parkup.R
 import com.stosic.parkup.leaderboard.LeaderboardScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-// --- DODATO: Firebase za čuvanje radijusa
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,10 +74,10 @@ fun HomeContent(
     var radiusEnabled by rememberSaveable { mutableStateOf(false) }
     var radiusMeters by rememberSaveable { mutableStateOf(500f) }
 
-    // NOVO: vidljivost radius bara koju diktira HomeScreen (vidljivo ako: nema detalja i nema rezervacije)
+    // Vidljivost radius bara (kontroliše ga HomeScreen)
     var showRadiusBar by rememberSaveable { mutableStateOf(true) }
 
-    // Učitaj postojeću vrednost iz users/{uid}.searchRadius
+    // Učitaj searchRadius
     LaunchedEffect(uid) {
         if (uid != null) {
             db.collection("users").document(uid).get().addOnSuccessListener { d ->
@@ -99,7 +90,7 @@ fun HomeContent(
         }
     }
 
-    // Svaka promena – upiši u Firestore (0 = isključeno)
+    // Snimi promene searchRadius
     LaunchedEffect(radiusEnabled, radiusMeters, uid) {
         if (uid != null) {
             val value = if (radiusEnabled) radiusMeters.toInt().coerceIn(50, 5000) else 0
@@ -122,30 +113,97 @@ fun HomeContent(
         return
     }
 
+    // ---- TABELA SVIH: state + model ----
+    var showAllTable by remember { mutableStateOf(false) }
+
+    data class AllSpotRow(
+        val id: String,
+        val title: String,
+        val pricePerHour: Long?,
+        val capacity: Long?,
+        val availableSlots: Long?,
+        val placeType: String?,
+        val zone: String?
+    )
+
+    var allSpots by remember { mutableStateOf<List<AllSpotRow>>(emptyList()) }
+    var allSpotsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+
+    // Listener za sve parkings kad je sheet otvoren
+    LaunchedEffect(showAllTable) {
+        if (showAllTable) {
+            allSpotsReg = db.collection("parkings")
+                .addSnapshotListener { qs, _ ->
+                    if (qs != null) {
+                        allSpots = qs.documents.map { doc ->
+                            AllSpotRow(
+                                id = doc.id,
+                                title = doc.getString("title")
+                                    ?: doc.getString("name")
+                                    ?: "-",
+                                pricePerHour = doc.getLong("pricePerHour"),
+                                capacity = doc.getLong("capacity"),
+                                availableSlots = doc.getLong("availableSlots"),
+                                placeType = doc.getString("placeType"),
+                                zone = doc.getString("zone")
+                            )
+                        }
+                    }
+                }
+        } else {
+            allSpotsReg?.remove()
+            allSpotsReg = null
+        }
+    }
+
+    // --- Helper: vertikalna linija (separator kolona) ---
+    @Composable
+    fun VSep(color: Color) {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(color)
+        )
+    }
+
+    val gridLine = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
+                // Leva strana: TROPHY + TABLE dugme (tabela DESNO od trophy-ja)
                 navigationIcon = {
-                    IconButton(
-                        enabled = !uiLocked,
-                        onClick = {
-                            scope.launch {
-                                animateTrophy = true
-                                delay(120)
-                                animateTrophy = false
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            enabled = !uiLocked,
+                            onClick = {
+                                scope.launch {
+                                    animateTrophy = true
+                                    delay(120)
+                                    animateTrophy = false
+                                }
+                                showLeaderboard = true
                             }
-                            showLeaderboard = true
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.EmojiEvents,
+                                contentDescription = "Rang lista",
+                                tint = Color.White,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = trophyScale
+                                    scaleY = trophyScale
+                                }
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.EmojiEvents,
-                            contentDescription = "Rang lista",
-                            tint = Color.White,
-                            modifier = Modifier.graphicsLayer {
-                                scaleX = trophyScale
-                                scaleY = trophyScale
-                            }
-                        )
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(enabled = !uiLocked, onClick = { showAllTable = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.TableRows,
+                                contentDescription = "Tabela svih",
+                                tint = Color.White
+                            )
+                        }
                     }
                 },
                 title = {
@@ -170,7 +228,7 @@ fun HomeContent(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // NOVO: Radius bar je animiran i veže se za showRadiusBar koji stiže iz HomeScreen
+            // Radius bar
             AnimatedVisibility(
                 visible = showRadiusBar,
                 enter = fadeIn(tween(180)) + expandVertically(tween(220)),
@@ -196,7 +254,7 @@ fun HomeContent(
                 }
             }
 
-            // Ekran sa mapom i ostalim – sada prosleđujemo callback da kontroliše vidljivost radius bara
+            // Mapa i ostalo
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -207,6 +265,81 @@ fun HomeContent(
                     onOverlayVisible = { show -> showRadiusBar = show },
                     onUiLockedChange = { locked -> uiLocked = locked }
                 )
+            }
+        }
+    }
+
+    // Bottom sheet – koristi Material3 animaciju podizanja/spuštanja
+    if (showAllTable) {
+        ModalBottomSheet(
+            onDismissRequest = { showAllTable = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            // Naslov
+            Text(
+                "Svi registrovani parking objekti",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            // ZAGLAVLJE sa primarnom bojom
+            Column {
+                // zaglavlje
+                Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary)) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .height(IntrinsicSize.Min)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val headColor = MaterialTheme.colorScheme.onPrimary
+                        Text("Naziv", Modifier.weight(1.8f).padding(vertical = 10.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
+                        Text("Cena",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
+                        Text("Kap.",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
+                        Text("Dost.", Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
+                        Text("Tip",   Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
+                        Text("Zona",  Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Divider(color = gridLine)
+
+                // REDOVI (zebra + vertikalni separatori + donje linije)
+                LazyColumn {
+                    items(allSpots, key = { it.id }) { spot ->
+                        val bg = if (allSpots.indexOf(spot) % 2 == 0)
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f)
+                        else Color.Transparent
+
+                        Box(Modifier.background(bg)) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(horizontal = 16.dp)
+                                    .height(IntrinsicSize.Min)
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(spot.title, Modifier.weight(1.8f).padding(vertical = 10.dp))
+                                VSep(gridLine)
+                                Text(spot.pricePerHour?.let { "${it} RSD/h" } ?: "-", Modifier.weight(0.8f).padding(start = 8.dp))
+                                VSep(gridLine)
+                                Text((spot.capacity ?: 0L).toString(), Modifier.weight(0.8f).padding(start = 8.dp))
+                                VSep(gridLine)
+                                Text((spot.availableSlots ?: 0L).toString(), Modifier.weight(0.8f).padding(start = 8.dp))
+                                VSep(gridLine)
+                                Text(spot.placeType.orEmpty(), Modifier.weight(0.9f).padding(start = 8.dp))
+                                VSep(gridLine)
+                                Text(spot.zone.orEmpty(), Modifier.weight(0.9f).padding(start = 8.dp))
+                            }
+                        }
+                        Divider(color = gridLine)
+                    }
+                }
             }
         }
     }
