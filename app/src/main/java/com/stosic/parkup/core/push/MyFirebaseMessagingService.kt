@@ -28,8 +28,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val userId = data["userId"]
 
         val intent = Intent(this, MainActivity::class.java).apply {
-            // Ne remetimo postojeću navigaciju; samo prosleđujemo hint-ove
             when (type) {
+                "reserved_proximity" -> {
+                    action = "OPEN_PARKING_DETAILS"
+                    if (!parkingId.isNullOrBlank()) putExtra("parkingId", parkingId)
+                }
                 "nearby_parking" -> {
                     action = "OPEN_PARKING_DETAILS"
                     if (!parkingId.isNullOrBlank()) putExtra("parkingId", parkingId)

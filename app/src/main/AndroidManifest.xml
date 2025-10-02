@@ -18,7 +18,7 @@
 
         <!-- FCM receiver -->
         <service
-            android:name=".core.MyFirebaseMessagingService"
+            android:name=".core.push.MyFirebaseMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
