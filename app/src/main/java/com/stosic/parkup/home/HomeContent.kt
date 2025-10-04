@@ -90,7 +90,6 @@ fun HomeContent(
         }
     }
 
-    // Snimi promene searchRadius
     LaunchedEffect(radiusEnabled, radiusMeters, uid) {
         if (uid != null) {
             val value = if (radiusEnabled) radiusMeters.toInt().coerceIn(50, 5000) else 0
@@ -113,7 +112,6 @@ fun HomeContent(
         return
     }
 
-    // ---- TABELA SVIH: state + model ----
     var showAllTable by remember { mutableStateOf(false) }
 
     data class AllSpotRow(
@@ -129,7 +127,6 @@ fun HomeContent(
     var allSpots by remember { mutableStateOf<List<AllSpotRow>>(emptyList()) }
     var allSpotsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
 
-    // Listener za sve parkings kad je sheet otvoren
     LaunchedEffect(showAllTable) {
         if (showAllTable) {
             allSpotsReg = db.collection("parkings")
@@ -156,7 +153,6 @@ fun HomeContent(
         }
     }
 
-    // --- Helper: vertikalna linija (separator kolona) ---
     @Composable
     fun VSep(color: Color) {
         Box(
@@ -172,7 +168,6 @@ fun HomeContent(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                // Leva strana: TROPHY + TABLE dugme (tabela DESNO od trophy-ja)
                 navigationIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
@@ -238,12 +233,12 @@ fun HomeContent(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Pretraga u radijusu", style = MaterialTheme.typography.labelLarge)
+                        Text("Search radius", style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.weight(1f))
                         Switch(checked = radiusEnabled, onCheckedChange = { radiusEnabled = it })
                     }
                     if (radiusEnabled) {
-                        Text("Radijus: ${radiusMeters.toInt()} m", style = MaterialTheme.typography.labelMedium)
+                        Text("Radius: ${radiusMeters.toInt()} m", style = MaterialTheme.typography.labelMedium)
                         Slider(
                             value = radiusMeters,
                             onValueChange = { radiusMeters = it },
@@ -254,7 +249,6 @@ fun HomeContent(
                 }
             }
 
-            // Mapa i ostalo
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -269,22 +263,17 @@ fun HomeContent(
         }
     }
 
-    // Bottom sheet – koristi Material3 animaciju podizanja/spuštanja
     if (showAllTable) {
         ModalBottomSheet(
             onDismissRequest = { showAllTable = false },
             containerColor = MaterialTheme.colorScheme.surface
         ) {
-            // Naslov
             Text(
-                "Svi registrovani parking objekti",
+                "All registered parking spots",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
-
-            // ZAGLAVLJE sa primarnom bojom
             Column {
-                // zaglavlje
                 Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary)) {
                     Row(
                         modifier = Modifier
@@ -294,22 +283,21 @@ fun HomeContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val headColor = MaterialTheme.colorScheme.onPrimary
-                        Text("Naziv", Modifier.weight(1.8f).padding(vertical = 10.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Name", Modifier.weight(1.8f).padding(vertical = 10.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                         VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                        Text("Cena",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Price",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                         VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                        Text("Kap.",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Cap.",  Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                         VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                        Text("Dost.", Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Av.", Modifier.weight(0.8f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                         VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                        Text("Tip",   Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Type",   Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                         VSep(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
-                        Text("Zona",  Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
+                        Text("Zone",  Modifier.weight(0.9f).padding(start = 8.dp), color = headColor, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Divider(color = gridLine)
 
-                // REDOVI (zebra + vertikalni separatori + donje linije)
                 LazyColumn {
                     items(allSpots, key = { it.id }) { spot ->
                         val bg = if (allSpots.indexOf(spot) % 2 == 0)

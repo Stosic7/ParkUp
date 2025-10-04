@@ -43,7 +43,6 @@ fun StartingScreen(
         ) {
             Spacer(Modifier.height(40.dp))
 
-            // ParkUp naslov tik iznad auta
             Text(
                 text = "ParkUp",
                 fontSize = 103.sp,
@@ -54,7 +53,6 @@ fun StartingScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            // Auto sa parking znakom
             Image(
                 painter = painterResource(id = R.drawable.car_parking), // tvoja slika auta
                 contentDescription = "Car Parking",
@@ -64,12 +62,10 @@ fun StartingScreen(
                     .padding(vertical = 20.dp)
             )
 
-            // Dugmići
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Login dugme sa belim overlay + belim okvirom
                 Button(
                     onClick = onLoginClick,
                     colors = ButtonDefaults.buttonColors(
@@ -100,7 +96,6 @@ fun StartingScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // Register dugme – belo sa plavim tekstom
                 OutlinedButton(
                     onClick = onRegisterClick,
                     colors = ButtonDefaults.outlinedButtonColors(

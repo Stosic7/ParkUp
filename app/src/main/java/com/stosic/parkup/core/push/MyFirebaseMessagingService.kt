@@ -21,9 +21,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val type = data["type"] // "nearby_parking" | "nearby_user" | null
 
         val title = data["title"] ?: remoteMessage.notification?.title ?: "ParkUp"
-        val body  = data["body"]  ?: remoteMessage.notification?.body  ?: "Nova obaveštenja"
+        val body  = data["body"]  ?: remoteMessage.notification?.body  ?: "New notifications"
 
-        // Podržimo oba slučaja bez diranja ostatka aplikacije
         val parkingId = data["parkingId"]
         val userId = data["userId"]
 
@@ -55,7 +54,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             nm.getNotificationChannel(channelId) == null) {
             nm.createNotificationChannel(
-                NotificationChannel(channelId, "ParkUp obaveštenja", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel(channelId, "ParkUp notification", NotificationManager.IMPORTANCE_HIGH)
             )
         }
 
@@ -78,7 +77,6 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 .collection("users").document(uid)
                 .update(mapOf("fcmToken" to token))
         } catch (_: Exception) {
-            // Ignoriši ako nema usera u tom trenutku
         }
     }
 }

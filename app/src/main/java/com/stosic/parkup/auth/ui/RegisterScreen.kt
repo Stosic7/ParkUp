@@ -69,10 +69,8 @@ fun RegisterScreen(
 
     val ctx = LocalContext.current
 
-    // držimo odabranu fotku za preview
     var photoUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Helper: enkodiraj uri -> Base64 thumbnail (256px, 80% JPEG)
     fun uriToBase64Thumbnail(context: Context, uri: Uri, maxSizePx: Int = 256, quality: Int = 80): String {
         val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             ImageDecoder.createSource(context.contentResolver, uri)
@@ -90,14 +88,12 @@ fun RegisterScreen(
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
-    // GALLERY picker
     val pickImage = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) photoUri = uri
     }
 
-    // CAMERA: TakePicturePreview -> Bitmap -> snimi u MediaStore da dobije Uri (za preview), ali ćemo i Base64
     val takePhoto = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bmp: Bitmap? ->
@@ -137,7 +133,6 @@ fun RegisterScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // logo
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Start
@@ -164,7 +159,6 @@ fun RegisterScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // Profilna preview + akcije
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -191,12 +185,12 @@ fun RegisterScreen(
                 Button(
                     onClick = { pickImage.launch("image/*") },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF262626), contentColor = Color.White)
-                ) { Text("Galerija") }
+                ) { Text("Gallery") }
 
                 Button(
                     onClick = { takePhoto.launch(null) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF262626), contentColor = Color.White)
-                ) { Text("Kamera") }
+                ) { Text("Camera") }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -207,7 +201,7 @@ fun RegisterScreen(
             LabeledField("Email", email, { email = it }, "Enter email address", container = BlueField, outline = Outline, textColor = Dark)
             if (email.isNotBlank() && !emailValid) {
                 Text(
-                    "Nevažeći email format (mora biti nesto@domen.tld).",
+                    "Invalid email format (example: something@domen.tld).",
                     color = Color(0xFFFFCACA),
                     fontSize = 12.sp
                 )
@@ -219,8 +213,6 @@ fun RegisterScreen(
 
             Button(
                 onClick = {
-                    // Ako je korisnik izabrao sliku, enkodiraj i zapamti privremeno u SharedPreferences.
-                    // ProfileScreen će na prvom otvaranju prebaciti u Firestore i obrisati pending.
                     val prefs = ctx.getSharedPreferences("parkup_prefs", Context.MODE_PRIVATE)
                     if (photoUri != null) {
                         runCatching {
@@ -230,7 +222,6 @@ fun RegisterScreen(
                     } else {
                         prefs.edit().remove("pending_profile_b64").apply()
                     }
-                    // Bitno: pošalji NULL za photoUri da MainActivity NE pokreće Firebase Storage.
                     onRegisterClick(email, password, ime, prezime, telefon, null)
                 },
                 enabled = canSubmit,

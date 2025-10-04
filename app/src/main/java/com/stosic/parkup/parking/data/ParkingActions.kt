@@ -28,7 +28,7 @@ object ParkingActions {
                 val psnap = tr.get(pref)
 
                 val available = (psnap.getLong("availableSlots") ?: 0L)
-                if (available <= 0L) throw IllegalStateException("Nema slobodnih mesta.")
+                if (available <= 0L) throw IllegalStateException("No available parking spots.")
 
                 if (!psnap.exists()) {
                     tr.set(pref, mapOf("availableSlots" to (available - 1L)), SetOptions.merge())
@@ -89,31 +89,6 @@ object ParkingActions {
         }
     }
 
-    suspend fun setRating(parkingId: String, stars: Int): Result<Unit> {
-        return try {
-            val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
-            val s = stars.coerceIn(1, 5)
-            val rdoc = db.collection("parkings").document(parkingId)
-                .collection("ratings").document(uid)
-            rdoc.set(mapOf("stars" to s, "updatedAt" to System.currentTimeMillis())).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun getAverageRating(parkingId: String): Result<Double> {
-        return try {
-            val coll = db.collection("parkings").document(parkingId).collection("ratings")
-            val qs = coll.get().await()
-            val vals = qs.documents.mapNotNull { it.getLong("stars")?.toDouble() }
-            val avg = if (vals.isEmpty()) 0.0 else vals.sum() / vals.size
-            Result.success(avg)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
     suspend fun addComment(parkingId: String, text: String): Result<String> {
         return try {
             val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -127,16 +102,15 @@ object ParkingActions {
         }
     }
 
-    // NOVO: jedinstveno glasanje po korisniku; zabrana self-like/dislike
     suspend fun voteComment(
         parkingId: String,
         commentId: String,
         commentAuthorUid: String,
-        vote: String // "like" ili "dislike"
+        vote: String // "like" or "dislike"
     ): Result<Unit> {
         return try {
             val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
-            if (uid == commentAuthorUid) return Result.failure(IllegalStateException("Ne možeš glasati za sopstveni komentar."))
+            if (uid == commentAuthorUid) return Result.failure(IllegalStateException("You can’t vote on your own comment."))
 
             val cref = db.collection("parkings").document(parkingId)
                 .collection("comments").document(commentId)
@@ -144,14 +118,12 @@ object ParkingActions {
 
             db.runTransaction { tr ->
                 val vsnap = tr.get(vref)
-                val prev = vsnap.getString("vote") // "like" ili "dislike" ili null
+                val prev = vsnap.getString("vote")
 
                 if (prev == vote) {
-                    // već glasao isto – ništa
                     return@runTransaction
                 }
 
-                // ažuriraj brojače
                 if (vote == "like") {
                     tr.update(cref, "likes", FieldValue.increment(1))
                     if (prev == "dislike") tr.update(cref, "dislikes", FieldValue.increment(-1))
@@ -164,8 +136,13 @@ object ParkingActions {
             }.await()
 
             if (vote == "like") {
-                // nagradi autora +2, kao i ranije
+                // author +2 points
                 AuthRepository.addPoints(commentAuthorUid, 2)
+            }
+
+            if (vote == "dislike") {
+                // author -1 point
+                AuthRepository.addPoints(commentAuthorUid, -1);
             }
             Result.success(Unit)
         } catch (e: Exception) {

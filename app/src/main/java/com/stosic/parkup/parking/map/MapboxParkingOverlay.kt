@@ -24,16 +24,8 @@ import com.mapbox.maps.plugin.gestures.OnMapClickListener
 import com.mapbox.maps.plugin.gestures.gestures
 import com.stosic.parkup.parking.data.ParkingSpot
 import kotlin.math.*
-
-// --- DODATO: da bismo čitali moju lokaciju i radijus iz users/{uid}
 import com.google.firebase.auth.FirebaseAuth
 
-/**
- * Stabilan overlay bez annotation plugina i bez queryRenderedFeatures klika.
- * - DVA GeoJSON izvora (GREEN/RED) + DVA SymbolLayer-a
- * - Klik: računa najbliži ParkingSpot u malom radijusu (30 m) i vraća ga.
- * - DODATO: filtriranje parkinga po `users/{uid}.searchRadius` oko `users/{uid}.lat/lng`
- */
 object MapboxParkingOverlay {
 
     private const val SRC_GREEN = "parkings-src-green"
@@ -42,20 +34,15 @@ object MapboxParkingOverlay {
     private const val LYR_RED   = "parkings-lyr-red"
     private const val IMG_GREEN = "parking-green"
     private const val IMG_RED   = "parking-red"
-
     private var reg: ListenerRegistration? = null
     private var currentSpots: List<ParkingSpot> = emptyList()
-
     private var srcGreenRef: GeoJsonSource? = null
     private var srcRedRef: GeoJsonSource? = null
-
     private var clickListener: OnMapClickListener? = null
-
-    // --- DODATO: realtime moja lokacija + radijus ---
     private var userReg: ListenerRegistration? = null
     private var myLat: Double? = null
     private var myLng: Double? = null
-    private var searchRadiusMeters: Int = 0 // 0 = isključeno
+    private var searchRadiusMeters: Int = 0
 
     fun install(
         mapView: MapView,
@@ -64,11 +51,9 @@ object MapboxParkingOverlay {
         val mapboxMap = mapView.getMapboxMap()
         val style = mapboxMap.getStyle() ?: return
 
-        // Ikonice — overwrite je bezbedan
         style.addImage(IMG_GREEN, createCircleBitmap(Color.parseColor("#FF2E7D32")))
         style.addImage(IMG_RED,   createCircleBitmap(Color.parseColor("#FFC62828")))
 
-        // Reset izvora/slojeva (čist state posle navigacije)
         runCatching { style.removeStyleLayer(LYR_GREEN) }
         runCatching { style.removeStyleLayer(LYR_RED) }
         runCatching { style.removeStyleSource(SRC_GREEN) }
@@ -106,17 +91,15 @@ object MapboxParkingOverlay {
         style.addLayer(layerGreen)
         style.addLayer(layerRed)
 
-        // Firestore realtime → puni izvore (sirovi spisak)
         reg?.remove()
         reg = FirebaseFirestore.getInstance()
             .collection("parkings")
             .addSnapshotListener { qs, _ ->
                 val list = qs?.documents?.mapNotNull { it.toObject(ParkingSpot::class.java) }.orEmpty()
                 currentSpots = list
-                updateSources(list) // <-- filtriranje se radi unutar updateSources
+                updateSources(list)
             }
 
-        // --- DODATO: slušaj users/{uid} za lat/lng + searchRadius ---
         val uid = FirebaseAuth.getInstance().currentUser?.uid
         userReg?.remove()
         if (uid != null) {
@@ -130,37 +113,21 @@ object MapboxParkingOverlay {
                 }
         }
 
-        // Klik listener: najbliži spot u 30 m
         clickListener?.let { mapView.gestures.removeOnMapClickListener(it) }
         clickListener = OnMapClickListener { lngLat ->
             val spot = nearestSpot(currentSpots, lngLat.latitude(), lngLat.longitude(), 30.0)
             if (spot != null) {
                 onMarkerClick?.invoke(spot)
-                // ne konzumiramo gest (false), da mapa i dalje radi normalno
             }
             false
         }
         mapView.gestures.addOnMapClickListener(clickListener!!)
     }
 
-    fun cleanup(mapView: MapView? = null) {
-        reg?.remove(); reg = null
-        userReg?.remove(); userReg = null
-        if (mapView != null && clickListener != null) {
-            mapView.gestures.removeOnMapClickListener(clickListener!!)
-        }
-        clickListener = null
-        srcGreenRef = null
-        srcRedRef = null
-    }
-
-    // --- Helpers ---
-
     private fun updateSources(spots: List<ParkingSpot>) {
         val greenFeats = ArrayList<Feature>()
         val redFeats = ArrayList<Feature>()
 
-        // --- DODATO: primeni filtriranje po radijusu ako imamo centar i radius > 0 ---
         val filtered = if (myLat != null && myLng != null && searchRadiusMeters > 0) {
             spots.filter { p ->
                 haversineMeters(myLat!!, myLng!!, p.lat, p.lng) <= searchRadiusMeters
@@ -185,12 +152,10 @@ object MapboxParkingOverlay {
         srcRedRef?.featureCollection(FeatureCollection.fromFeatures(redFeats))
     }
 
-    // IZMENJENO: umesto kruga crtamo zastavicu (anchor je BOTTOM, pa je dno jarbola na dnu bitmape)
     private fun createCircleBitmap(color: Int, size: Int = 64): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
 
-        // Jarbol
         val polePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.parseColor("#424242") }
         val poleWidth = size * 0.10f
         val poleLeft = size * 0.45f - poleWidth / 2f
@@ -200,7 +165,6 @@ object MapboxParkingOverlay {
         val poleRect = RectF(poleLeft, poleTop, poleRight, poleBottom)
         c.drawRoundRect(poleRect, poleWidth / 2f, poleWidth / 2f, polePaint)
 
-        // Zastavica (trougao na desnu stranu)
         val flagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
         val flagTopY = size * 0.18f
         val flagMidY = size * 0.36f
@@ -215,7 +179,6 @@ object MapboxParkingOverlay {
         }
         c.drawPath(path, flagPaint)
 
-        // Baza jarbola (diskretna senka)
         val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.parseColor("#303030") }
         c.drawCircle(poleX, poleBottom, poleWidth * 0.35f, basePaint)
 

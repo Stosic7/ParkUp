@@ -51,16 +51,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { AppRoot() } // <-- umesto AuthHost()
-
-        // 1) Traži FINE_LOCATION (+ POST_NOTIFICATIONS za Android 13+)
+        setContent { AppRoot() }
         val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms += Manifest.permission.POST_NOTIFICATIONS
         }
         requestPerms.launch(perms.toTypedArray())
-
-        // 2) Hook na login/logout: upiši FCM token i pokreni/zaustavi servis za lokaciju
         auth.addAuthStateListener { fa ->
             val user = fa.currentUser
             if (user != null) {
@@ -86,10 +82,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppRoot() {
-    // kratko zadržavanje ekrana sa slikom preko celog ekrana
     var showSplash by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
-        delay(0) // po potrebi promeni trajanje
+        delay(0)
         showSplash = false
     }
     if (showSplash) {
@@ -122,18 +117,14 @@ fun FullscreenSplash() {
 fun AuthHost() {
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
-
     var screen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "start") }
     var message by remember { mutableStateOf<String?>(null) }
     var showDialog by remember { mutableStateOf(false) }
     var userData by remember { mutableStateOf<Map<String, Any>?>(null) }
-
     if (showDialog && message != null) {
         CustomPopup(message = message!!, onDismiss = { showDialog = false })
     }
-
     var userDocReg by remember { mutableStateOf<com.google.firebase.firestore.ListenerRegistration?>(null) }
-
     DisposableEffect(auth.currentUser?.uid) {
         val uid = auth.currentUser?.uid
         if (uid != null) {

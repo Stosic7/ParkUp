@@ -62,7 +62,7 @@ class LocationUpdatesService : Service() {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             val ch = NotificationChannel(
                 channelId,
-                "Praćenje lokacije",
+                "Tracking location",
                 NotificationManager.IMPORTANCE_MIN
             )
             nm.createNotificationChannel(ch)
@@ -70,7 +70,7 @@ class LocationUpdatesService : Service() {
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_stat_parking)
             .setContentTitle("ParkUp")
-            .setContentText("Ažuriranje lokacije za obaveštenja")
+            .setContentText("Updating")
             .setOngoing(true)
             .build()
     }
@@ -95,13 +95,11 @@ class LocationUpdatesService : Service() {
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
-            // Nemamo permisiju – ništa, servis će raditi sledeći put kad se odobri.
             return
         }
         try {
             client.requestLocationUpdates(req, cb, mainLooper)
         } catch (_: SecurityException) {
-            // Ako korisnik ukine permisiju u hodu
         }
     }
 }

@@ -14,7 +14,7 @@ fun ParkingMarker(item: ParkingSpot, onClick: (ParkingSpot) -> Unit) {
     Marker(
         state = MarkerState(position = pos),
         title = item.title,
-        snippet = if (item.isActive) "Slobodan" else "Rezervisan",
+        snippet = if (item.isActive) "Available" else "Reserved",
         onClick = {
             onClick(item)
             true

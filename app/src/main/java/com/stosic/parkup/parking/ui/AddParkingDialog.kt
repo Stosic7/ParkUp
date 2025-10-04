@@ -38,7 +38,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -54,16 +53,11 @@ fun AddParkingDialog(
     var title by remember { mutableStateOf("") }
     var price by remember { mutableStateOf("") }
     var capacity by remember { mutableStateOf("") }
-
     var query by remember { mutableStateOf("") }
     var suggestions by remember { mutableStateOf<List<AddressSuggestion>>(emptyList()) }
     var picked by remember { mutableStateOf<AddressSuggestion?>(null) }
-
-    // --- NOVO: slika parking mesta (opciono) ---
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var photoBase64 by remember { mutableStateOf<String?>(null) }
-
-    // --- NOVO: dodatna polja ---
     var placeType by remember { mutableStateOf("street") }      // "street" | "garage"
     var isDisabledSpot by remember { mutableStateOf(false) }    // da li je mesto za invalide
     var zone by remember { mutableStateOf("green") }            // "green" | "red" | "extra"
@@ -102,7 +96,6 @@ fun AddParkingDialog(
             val baos = ByteArrayOutputStream()
             bmp.compress(Bitmap.CompressFormat.JPEG, 85, baos)
             photoBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-            // za preview formiramo privremeni uri u MediaStore
             val name = "parking_${System.currentTimeMillis()}.jpg"
             val cv = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
@@ -123,7 +116,6 @@ fun AddParkingDialog(
 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-
     val mapboxToken by remember { mutableStateOf(readMapboxToken(ctx)) }
 
     LaunchedEffect(query) {
@@ -141,13 +133,13 @@ fun AddParkingDialog(
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Dodaj parking") },
+        title = { Text("Add parking spot") },
         text = {
             Column {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Adresa (Niš)") },
+                    label = { Text("Address (Niš)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -170,7 +162,7 @@ fun AddParkingDialog(
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Naziv parking mesta") },
+                    label = { Text("Parking spot name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -180,7 +172,7 @@ fun AddParkingDialog(
                 OutlinedTextField(
                     value = price,
                     onValueChange = { price = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Cena / h (RSD)") },
+                    label = { Text("Price per hour (RSD)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -190,50 +182,47 @@ fun AddParkingDialog(
                 OutlinedTextField(
                     value = capacity,
                     onValueChange = { capacity = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Kapacitet (broj mesta)") },
+                    label = { Text("Capacity (number of spots)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(Modifier.height(12.dp))
 
-                // --- NOVO: Tip lokacije (ulica / garaža) ---
-                Text("Tip lokacije", fontWeight = FontWeight.SemiBold)
+                Text("Type", fontWeight = FontWeight.SemiBold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SelectChip(
                         selected = placeType == "street",
-                        label = "Ulica"
+                        label = "Street"
                     ) { placeType = "street" }
                     SelectChip(
                         selected = placeType == "garage",
-                        label = "Garaža"
+                        label = "Garage"
                     ) { placeType = "garage" }
                 }
 
                 Spacer(Modifier.height(10.dp))
 
-                // --- NOVO: Da li je mesto za invalide ---
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(checked = isDisabledSpot, onCheckedChange = { isDisabledSpot = it })
                     Spacer(Modifier.width(8.dp))
-                    Text("Mesto za invalide")
+                    Text("Accessible parking spot")
                 }
 
                 Spacer(Modifier.height(10.dp))
 
-                // --- NOVO: Zona (zelena / crvena / extra) preko boja ---
-                Text("Zona", fontWeight = FontWeight.SemiBold)
+                Text("Zone", fontWeight = FontWeight.SemiBold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ZoneChip(
-                        text = "Zelena",
+                        text = "Green",
                         color = Color(0xFF2E7D32),
                         selected = zone == "green"
                     ) { zone = "green" }
                     ZoneChip(
-                        text = "Crvena",
+                        text = "Red",
                         color = Color(0xFFC62828),
                         selected = zone == "red"
                     ) { zone = "red" }
@@ -246,14 +235,13 @@ fun AddParkingDialog(
 
                 Spacer(Modifier.height(12.dp))
 
-                // --- Slika ---
-                Text("Slika parking mesta (opciono)", fontWeight = FontWeight.SemiBold)
+                Text("Parking spot photo (optional)", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                        Text("Galerija")
+                        Text("Gallery")
                     }
                     OutlinedButton(onClick = { takePhoto.launch(null) }) {
-                        Text("Kamera")
+                        Text("Camera")
                     }
                 }
                 Spacer(Modifier.height(6.dp))
@@ -287,7 +275,7 @@ fun AddParkingDialog(
                 picked?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Koordinate: ${"%.6f".format(it.lat)}, ${"%.6f".format(it.lng)}",
+                        "Coordinates: ${"%.6f".format(it.lat)}, ${"%.6f".format(it.lng)}",
                         fontSize = 12.sp
                     )
                 }
@@ -302,10 +290,10 @@ fun AddParkingDialog(
             TextButton(
                 onClick = {
                     val pick = picked
-                    if (pick == null) { error = "Izaberi validnu adresu iz liste."; return@TextButton }
-                    if (title.isBlank()) { error = "Unesi naziv."; return@TextButton }
+                    if (pick == null) { error = "Select a valid address from the list."; return@TextButton }
+                    if (title.isBlank()) { error = "Enter a name."; return@TextButton }
                     val capVal = capacity.toLongOrNull() ?: -1L
-                    if (capVal < 0L) { error = "Kapacitet mora biti broj (0 ili više)."; return@TextButton }
+                    if (capVal < 0L) { error = "Capacity must be a number (0 or higher)."; return@TextButton }
 
                     busy = true; error = null
                     scope.launch {
@@ -318,14 +306,13 @@ fun AddParkingDialog(
                             pricePerHour = p,
                             capacity = capVal,
                             photoBase64 = photoBase64,
-                            // --- NOVO: prosleđujemo dodatna polja ---
                             placeType = placeType,           // "street" | "garage"
                             isDisabledSpot = isDisabledSpot, // true | false
                             zone = zone                      // "green" | "red" | "extra"
                         )
                         busy = false
                         if (r.isSuccess) onSaved() else {
-                            error = r.exceptionOrNull()?.message ?: "Greška pri upisu."
+                            error = r.exceptionOrNull()?.message ?: "Error while saving."
                         }
                     }
                 },
@@ -335,16 +322,14 @@ fun AddParkingDialog(
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Sačuvaj")
+                Text("Save")
             }
         },
         dismissButton = {
-            TextButton(onClick = { if (!busy) onDismiss() }) { Text("Otkaži") }
+            TextButton(onClick = { if (!busy) onDismiss() }) { Text("Cancel") }
         }
     )
 }
-
-// --- UI helpers & REST (kao ranije) ---
 
 @Composable
 private fun SuggestionRow(

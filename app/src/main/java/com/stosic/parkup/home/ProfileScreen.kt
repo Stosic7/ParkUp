@@ -13,6 +13,9 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.background
+import com.stosic.parkup.leaderboard.model.LB_COMPARATOR
+import com.stosic.parkup.leaderboard.model.LbEntry
+import com.stosic.parkup.leaderboard.model.docToLbEntry
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
@@ -66,13 +69,11 @@ fun ProfileScreen(
     val auth = remember { FirebaseAuth.getInstance() }
     val uid = auth.currentUser?.uid
     val ctx = LocalContext.current
-
     var ime by remember { mutableStateOf("") }
     var prezime by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
     var email by remember { mutableStateOf(userEmail) }
     var photoBase64 by remember { mutableStateOf("") }
-
     var bio by remember { mutableStateOf("") }
     var isEditingBio by remember { mutableStateOf(false) }
     var bioDraft by remember { mutableStateOf(bio) }
@@ -81,17 +82,15 @@ fun ProfileScreen(
     LaunchedEffect(bio, isEditingBio) {
         if (!isEditingBio) bioDraft = bio
     }
+
     var points by remember { mutableStateOf(0L) }
     var rank by remember { mutableStateOf(0L) }
     var parkingCount by remember { mutableStateOf(0L) }
-
     var userDocReg by remember { mutableStateOf<ListenerRegistration?>(null) }
     var usersReg by remember { mutableStateOf<ListenerRegistration?>(null) }
-
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showChangePass by remember { mutableStateOf(false) }
 
-    // Prefill iz userData (ostavljeno kako je bilo)
     var didPrefill by remember { mutableStateOf(false) }
     LaunchedEffect(userData) {
         if (!didPrefill && userData != null) {
@@ -106,7 +105,6 @@ fun ProfileScreen(
         }
     }
 
-    // Realtime korisnik (uključuje photoBase64)
     DisposableEffect(uid) {
         if (uid != null) {
             userDocReg?.remove()
@@ -127,21 +125,17 @@ fun ProfileScreen(
         onDispose { userDocReg?.remove(); userDocReg = null }
     }
 
-    // Rang (ostavljeno)
     DisposableEffect(uid) {
         usersReg?.remove()
         usersReg = db.collection("users")
             .addSnapshotListener { snap, _ ->
-                val list = snap?.documents?.map { d ->
-                    val pts = d.getLong("points") ?: 0L
-                    val id = d.id
-                    id to pts
-                }.orEmpty()
-                val ordered = list.sortedWith(
-                    compareByDescending<Pair<String, Long>> { it.second }.thenBy { it.first }
-                )
-                val idx = ordered.indexOfFirst { it.first == uid }
-                if (idx >= 0) rank = (idx + 1).toLong()
+                val everyone: List<LbEntry> =
+                    snap?.documents?.map { d -> docToLbEntry(d) }.orEmpty()
+
+                val ordered = everyone.sortedWith(LB_COMPARATOR)
+
+                val idx = if (uid == null) -1 else ordered.indexOfFirst { it.uid == uid }
+                rank = if (idx >= 0) (idx + 1).toLong() else 0L
             }
         onDispose { usersReg?.remove(); usersReg = null }
     }
@@ -161,17 +155,14 @@ fun ProfileScreen(
         }
     }
 
-    // Local preview i upload state
     var localPreview by remember { mutableStateOf<Uri?>(null) }
     var isUploading by remember { mutableStateOf(false) }
 
-    // Helperi za kodiranje/dekodiranje
     fun uriToBase64(context: Context, uri: Uri, maxSizePx: Int = 256, quality: Int = 80): String {
         val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val src = ImageDecoder.createSource(context.contentResolver, uri)
             ImageDecoder.decodeBitmap(src)
         } else {
-            // Fallback za starije
             context.contentResolver.openInputStream(uri).use { input ->
                 requireNotNull(input)
                 BitmapFactory.decodeStream(input)
@@ -193,12 +184,11 @@ fun ProfileScreen(
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     } catch (_: Exception) { null }
 
-    // Galerija → Base64 → Firestore
     val pickMedia = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null && uid != null) {
-            localPreview = uri  // odmah pokaži preview
+            localPreview = uri
             isUploading = true
             runCatching {
                 val b64 = uriToBase64(ctx, uri)
@@ -213,7 +203,6 @@ fun ProfileScreen(
         }
     }
 
-    // Kamera → Bitmap → Base64 → Firestore
     val takePhoto = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bmp: Bitmap? ->
@@ -242,7 +231,7 @@ fun ProfileScreen(
                     }
                 },
                 title = {
-                    Text("Profil", color = Color.White, fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Italic)
+                    Text("Profile", color = Color.White, fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Italic)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF42A5F5))
             )
@@ -269,7 +258,6 @@ fun ProfileScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     when {
-                        // 1) lokalni preview (URI) – AsyncImage
                         localPreview != null -> {
                             AsyncImage(
                                 model = localPreview,
@@ -278,7 +266,6 @@ fun ProfileScreen(
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
-                        // 2) trajna slika iz Firestore (Base64) – ručni decode u Bitmap
                         photoBase64.isNotBlank() -> {
                             val bmp = remember(photoBase64) { base64ToBitmap(photoBase64) }
                             if (bmp != null) {
@@ -297,7 +284,6 @@ fun ProfileScreen(
                                 )
                             }
                         }
-                        // 3) fallback – ikonica
                         else -> {
                             Icon(
                                 imageVector = Icons.Filled.Person,
@@ -333,22 +319,20 @@ fun ProfileScreen(
                 OutlinedButton(
                     onClick = { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     enabled = !isUploading
-                ) { Text(if (isUploading) "Učitavam..." else "Promeni (Galerija)") }
+                ) { Text(if (isUploading) "Loading..." else "Change (Gallery)") }
 
                 OutlinedButton(
                     onClick = { takePhoto.launch(null) },
                     enabled = !isUploading
-                ) { Text(if (isUploading) "Učitavam..." else "Uslikaj (Kamera)") }
+                ) { Text(if (isUploading) "Loading..." else "Take a photo (Camera)") }
             }
 
-            // --- BIO bubble ---
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Box(Modifier.fillMaxWidth()) {
-                    // Olovka gore desno (samo kada ne editujemo)
                     if (!isEditingBio) {
                         IconButton(
                             onClick = { if (uid != null) isEditingBio = true },
@@ -357,12 +341,12 @@ fun ProfileScreen(
                                 .align(Alignment.TopEnd)
                                 .padding(6.dp)
                         ) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Uredi bio", tint = Color(0xFF546E7A))
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit bio", tint = Color(0xFF546E7A))
                         }
                     }
 
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("O meni", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
+                        Text("About me", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
 
                         if (isEditingBio) {
                             OutlinedTextField(
@@ -371,7 +355,7 @@ fun ProfileScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 100.dp),
-                                placeholder = { Text("Napiši nešto o sebi...") },
+                                placeholder = { Text("Write something about yourself...") },
                                 singleLine = false,
                                 maxLines = 6
                             )
@@ -388,8 +372,6 @@ fun ProfileScreen(
                                             .collection("users").document(uid)
                                             .update("bio", finalText)
                                             .addOnSuccessListener {
-                                                // lokalno osveži
-                                                // (snapshot listener će ionako dohvatiti, ali odmah ažuriramo UI)
                                                 savingBio = false
                                                 isEditingBio = false
                                             }
@@ -398,20 +380,19 @@ fun ProfileScreen(
                                             }
                                     },
                                     enabled = !savingBio && uid != null
-                                ) { Text(if (savingBio) "Čuvam..." else "Sačuvaj") }
+                                ) { Text(if (savingBio) "Saving..." else "Save") }
 
                                 OutlinedButton(
                                     onClick = {
-                                        // otkaži izmene – vrati na original i zatvori edit
                                         bioDraft = bio
                                         isEditingBio = false
                                     },
                                     enabled = !savingBio
-                                ) { Text("Otkaži") }
+                                ) { Text("Cancel") }
                             }
                         } else {
                             // prikaz bio teksta (ili placeholder)
-                            val shown = bio.takeIf { it.isNotBlank() } ?: "Nije dodato ništa o korisniku."
+                            val shown = bio.takeIf { it.isNotBlank() } ?: "No information about the user."
                             Text(
                                 shown,
                                 color = Color(0xFF37474F),
@@ -431,12 +412,12 @@ fun ProfileScreen(
                     onClick = { onOpenLeaderboard?.invoke() },
                     modifier = Modifier.weight(1f),
                     enabled = onOpenLeaderboard != null
-                ) { Text("Pogledaj rang listu") }
+                ) { Text("View leaderboard") }
 
                 OutlinedButton(
                     onClick = { showChangePass = true },
                     modifier = Modifier.weight(1f)
-                ) { Text("Promeni lozinku") }
+                ) { Text("Change password") }
             }
 
             Button(
@@ -454,8 +435,8 @@ fun ProfileScreen(
             onDismissRequest = { showLogoutConfirm = false },
             confirmButton = { TextButton(onClick = { showLogoutConfirm = false; onLogout() }) { Text("Log out") } },
             dismissButton = { TextButton(onClick = { showLogoutConfirm = false }) { Text("Cancel") } },
-            title = { Text("Odjava") },
-            text = { Text("Da li ste sigurni da želite da se odjavite?") }
+            title = { Text("Logout") },
+            text = { Text("Are you sure you want to log out?") }
         )
     }
 
@@ -463,8 +444,6 @@ fun ProfileScreen(
         ChangePasswordDialog(email = email, onDismiss = { showChangePass = false })
     }
 }
-
-/* --- Ostali kompozabli (StatsCard, ProgressCard, BadgesRow, ChangePasswordDialog) ostaju ISTI kao kod tebe --- */
 
 @Composable
 private fun StatsCard(points: Long, rank: Long, parkingCount: Long) {
@@ -475,13 +454,13 @@ private fun StatsCard(points: Long, rank: Long, parkingCount: Long) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column { Text("Poeni", fontWeight = FontWeight.SemiBold); Text("$points", fontSize = 20.sp) }
-                Column(horizontalAlignment = Alignment.End) { Text("Rang", fontWeight = FontWeight.SemiBold); Text(if (rank > 0) "#$rank" else "-", fontSize = 20.sp) }
+                Column { Text("Points", fontWeight = FontWeight.SemiBold); Text("$points", fontSize = 20.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("Rank", fontWeight = FontWeight.SemiBold); Text(if (rank > 0) "#$rank" else "-", fontSize = 20.sp) }
             }
             Divider()
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column { Text("Parking objave", fontWeight = FontWeight.SemiBold); Text("$parkingCount", fontSize = 20.sp) }
-                Column(horizontalAlignment = Alignment.End) { Text("Status", fontWeight = FontWeight.SemiBold); Text(if (points > 0) "Aktivan" else "Nov", fontSize = 20.sp) }
+                Column { Text("Parking spots added", fontWeight = FontWeight.SemiBold); Text("$parkingCount", fontSize = 20.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("Status", fontWeight = FontWeight.SemiBold); Text(if (points > 0) "Active" else "New", fontSize = 20.sp) }
             }
         }
     }
@@ -497,10 +476,10 @@ private fun ProgressCard(points: Long) {
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Napredak do sledećeg ranga", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
+            Text("Progress to the next rank", fontWeight = FontWeight.SemiBold, color = Color(0xFF2B2B2B))
             LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(8.dp))
             val toNext = (maxForTier - points).coerceAtLeast(0)
-            Text(if (toNext > 0) "Još $toNext poena do sledećeg ranga" else "Maksimalni rang u ovom modelu", fontSize = 12.sp, color = Color(0xFF607D8B))
+            Text(if (toNext > 0) "$toNext points to the next rank" else "Maximum rank in this model", fontSize = 12.sp, color = Color(0xFF607D8B))
         }
     }
 }
@@ -552,12 +531,12 @@ private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
     val auth = FirebaseAuth.getInstance()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Promena lozinke") },
+        title = { Text("Change password") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = currentPass, onValueChange = { currentPass = it },
-                    label = { Text("Trenutna lozinka") },
+                    label = { Text("Current password") },
                     visualTransformation = if (showCur) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = { IconButton(onClick = { showCur = !showCur }) { Icon(if (showCur) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
                     leadingIcon = { Icon(Icons.Filled.Lock, null) },
@@ -565,7 +544,7 @@ private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
                 )
                 OutlinedTextField(
                     value = newPass, onValueChange = { newPass = it },
-                    label = { Text("Nova lozinka") },
+                    label = { Text("New password") },
                     visualTransformation = if (showNew) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = { IconButton(onClick = { showNew = !showNew }) { Icon(if (showNew) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
                     leadingIcon = { Icon(Icons.Filled.Lock, null) },
@@ -573,7 +552,7 @@ private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
                 )
                 OutlinedTextField(
                     value = confirmPass, onValueChange = { confirmPass = it },
-                    label = { Text("Ponovi novu lozinku") },
+                    label = { Text("Repeat new password") },
                     visualTransformation = if (showConf) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = { IconButton(onClick = { showConf = !showConf }) { Icon(if (showConf) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null) } },
                     leadingIcon = { Icon(Icons.Filled.Lock, null) },
@@ -585,8 +564,8 @@ private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (newPass.length < 6) { err = "Nova lozinka mora imati bar 6 karaktera"; return@TextButton }
-                    if (newPass != confirmPass) { err = "Nova lozinka i potvrda se ne poklapaju"; return@TextButton }
+                    if (newPass.length < 6) { err = "The new password must be at least 6 characters long."; return@TextButton }
+                    if (newPass != confirmPass) { err = "Passwords do not match."; return@TextButton }
                     val user = auth.currentUser
                     val mail = user?.email ?: email
                     val cred = EmailAuthProvider.getCredential(mail, currentPass)
@@ -594,12 +573,12 @@ private fun ChangePasswordDialog(email: String, onDismiss: () -> Unit) {
                         ?.addOnSuccessListener {
                             user.updatePassword(newPass)
                                 .addOnSuccessListener { onDismiss() }
-                                .addOnFailureListener { e -> err = e.message ?: "Greška pri promeni lozinke" }
+                                .addOnFailureListener { e -> err = e.message ?: "Error while changing the password" }
                         }
-                        ?.addOnFailureListener { e -> err = e.message ?: "Pogrešna trenutna lozinka" }
+                        ?.addOnFailureListener { e -> err = e.message ?: "Incorrect current password" }
                 }
-            ) { Text("Sačuvaj") }
+            ) { Text("Save") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Otkaži") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

@@ -41,7 +41,6 @@ fun LoginScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Logo gore levo
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -54,7 +53,6 @@ fun LoginScreen(
             Text("P", color = Dark, fontSize = 28.sp, fontWeight = FontWeight.Black)
         }
 
-        // Glavni sadržaj
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -62,7 +60,6 @@ fun LoginScreen(
                 .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Kartica
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -114,7 +111,6 @@ fun LoginScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Dugme ispod kartice
             Button(
                 onClick = { onLoginClick(email, password) },
                 enabled = canSubmit,
@@ -136,7 +132,6 @@ fun LoginScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // Tekst ispod dugmeta
             TextButton(onClick = onNavigateToRegister) {
                 Text("Don't have an account? Sign up.", color = Outline)
             }

@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stosic.parkup.leaderboard.model.LB_COMPARATOR
+import com.stosic.parkup.leaderboard.model.docToLbEntry
 import com.google.firebase.firestore.FirebaseFirestore
 import com.stosic.parkup.leaderboard.model.LbEntry
 
@@ -58,23 +60,10 @@ fun LeaderboardScreen(
     DisposableEffect(Unit) {
         val reg = db.collection("users")
             .addSnapshotListener { snap, _ ->
-                val list = snap?.documents?.map { d ->
-                    val first = d.getString("ime").orEmpty()
-                    val last = d.getString("prezime").orEmpty()
-                    val email = d.getString("email").orEmpty()
-                    val points = d.getLong("points") ?: 0L
-                    LbEntry(
-                        uid = d.id,
-                        fullName = listOf(first, last).filter { it.isNotBlank() }.joinToString(" ").ifBlank { email },
-                        email = email,
-                        points = points
-                    )
-                }.orEmpty()
-                entries = list.sortedWith(
-                    compareByDescending<LbEntry> { it.points }
-                        .thenBy { it.fullName.lowercase() }
-                        .thenBy { it.email.lowercase() }
-                )
+                val list = snap?.documents?.map { d -> docToLbEntry(d) }.orEmpty()
+
+                entries = list.sortedWith(LB_COMPARATOR)
+
                 loading = false
             }
         onDispose { reg.remove() }
@@ -152,7 +141,7 @@ fun LeaderboardScreen(
             ) {
                 Column(Modifier.padding(top = 12.dp)) {
                     Text(
-                        "Svi korisnici",
+                        "All users",
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         fontWeight = FontWeight.SemiBold
                     )
@@ -194,7 +183,7 @@ fun LeaderboardScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Text("${e.points} poena", fontWeight = FontWeight.Medium)
+                                Text("${e.points} points", fontWeight = FontWeight.Medium)
                             }
                             if (idx < entries.lastIndex) Divider()
                         }

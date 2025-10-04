@@ -74,15 +74,11 @@ import kotlinx.coroutines.launch
 import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Locale
-
-// --- DODATO: geofencing za notifikacije i kada je app ugašen ---
 import android.content.BroadcastReceiver
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
-
-// ---------- Filter model ----------
 
 private data class ParkingFilter(
     val onlyAvailable: Boolean = false,
@@ -92,9 +88,8 @@ private data class ParkingFilter(
     val isCovered: Boolean = false,
     var hasDisabledSpot : Boolean = false,
     val maxDistanceMeters: Double? = null,
-    // Pretraga AUTORA po EMAIL adresi:
     val authorQuery: String = "",
-    // Datum/vreme — podržava "yyyy-MM-dd" ili "yyyy-MM-dd HH:mm"
+    // Date/Time — supports "yyyy-MM-dd" or "yyyy-MM-dd HH:mm"
     val fromDate: String = "",
     val toDate: String = ""
 ) {
@@ -117,7 +112,6 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
         val d = distanceMeters(userPoint.latitude(), userPoint.longitude(), p.lat, p.lng)
         if (d > maxDistanceMeters) return false
     }
-    // Autor preko EMAIL-a (case-insensitive)
     if (authorQuery.isNotBlank()) {
         val email = p.createdByEmail.lowercase()
         if (!email.contains(authorQuery.lowercase())) return false
@@ -125,16 +119,12 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
     return true
 }
 
-// ---------- Focus target for map ----------
-
 private data class FocusTarget(
     val lat: Double,
     val lng: Double,
     val zoom: Double = 17.0,
     val nonce: Long = System.currentTimeMillis()
 )
-
-// ---------- Screen ----------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -146,22 +136,17 @@ fun HomeScreen(
 ) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
-
     var showAdd by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<NearbyParking?>(null) }
     var showDetails by remember { mutableStateOf(false) }
-
     var reserved by remember { mutableStateOf<NearbyParking?>(null) }
     var reservedDistanceMeters by remember { mutableStateOf<Double?>(null) }
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
-
-    // filter + list state
     var showFilter by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(ParkingFilter()) }
     var showFilteredList by remember { mutableStateOf(false) }
     var allParkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
 
-    // Fleksibilni parser za datum/vreme
     fun parseDateFlexible(s: String): Long? {
         if (s.isBlank()) return null
         val patterns = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd")
@@ -177,19 +162,14 @@ fun HomeScreen(
     }
 
     val filtered = remember(allParkings, filter, lastUserPoint) {
-        // 1) osnovni filteri (dostupnost, cena, EV, rampa, natkriveno, distanca, autor-email)
         val base = allParkings.filter { filter.matches(it, lastUserPoint) }
-
-        // 2) vremenski opseg (inclusive)
         val fromMillis = parseDateFlexible(filter.fromDate) ?: Long.MIN_VALUE
-        // Ako "to" ima SAMO datum, produži do kraja dana; ako ima i vreme, koristi tačno
         val toRaw = parseDateFlexible(filter.toDate)
         val toMillisIncl = if (toRaw != null) {
-            // utvrdi da li je korisnik uneo vreme (ima razmak)
             if (filter.toDate.contains(" ")) {
-                toRaw // tačno vreme
+                toRaw
             } else {
-                toRaw + (24L * 60 * 60 * 1000 - 1) // do kraja dana
+                toRaw + (24L * 60 * 60 * 1000 - 1)
             }
         } else Long.MAX_VALUE
 
@@ -201,10 +181,7 @@ fun HomeScreen(
         }
     }
 
-    // map focus
     var focusTarget by remember { mutableStateOf<FocusTarget?>(null) }
-
-    // recenter UI
     var showRecenter by remember { mutableStateOf(false) }
     var recenterSignal by remember { mutableStateOf<Long?>(null) }
 
@@ -227,7 +204,6 @@ fun HomeScreen(
             recenterSignal = recenterSignal
         )
 
-        // ADD FAB
         AnimatedVisibility(
             visible = !showDetails && reserved == null,
             modifier = Modifier
@@ -240,7 +216,6 @@ fun HomeScreen(
             }
         }
 
-        // FILTER FAB (sa tačkicom kad je aktivan)
         AnimatedVisibility(
             visible = !showDetails && reserved == null,
             modifier = Modifier
@@ -268,7 +243,6 @@ fun HomeScreen(
             }
         }
 
-        // RECENTER FAB
         AnimatedVisibility(
             visible = showRecenter && !showDetails,
             enter = fadeIn(tween(180)),
@@ -290,7 +264,6 @@ fun HomeScreen(
             }
         }
 
-        // Bubble pre detalja
         AnimatedVisibility(
             visible = selected != null && !showDetails && reserved == null,
             modifier = Modifier
@@ -315,23 +288,22 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(sp.title.ifBlank { "Parking" }, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { selected = null }) { Text("Zatvori") }
+                        TextButton(onClick = { selected = null }) { Text("Close") }
                     }
 
                     val now = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-                    Text("Vreme: $now", color = Color(0xFF546E7A))
+                    Text("Time: $now", color = Color(0xFF546E7A))
                     val cap = if (sp.capacity != null) "${sp.available}/${sp.capacity}" else "${sp.available}"
-                    Text("Slobodno: $cap", color = Color(0xFF546E7A))
+                    Text("Available: $cap", color = Color(0xFF546E7A))
                     Spacer(Modifier.height(10.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(onClick = { showDetails = true }, modifier = Modifier.weight(1f)) { Text("Detalji") }
+                        Button(onClick = { showDetails = true }, modifier = Modifier.weight(1f)) { Text("Details") }
                     }
                 }
             }
         }
 
-        // Baner nakon rezervacije
         AnimatedVisibility(
             visible = reserved != null,
             modifier = Modifier
@@ -361,16 +333,15 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Rezervacija u toku", color = Color(0xFF42A5F5), fontWeight = FontWeight.SemiBold)
+                        Text("Reservation in progress", color = Color(0xFF42A5F5), fontWeight = FontWeight.SemiBold)
                         Text(sp.title.ifBlank { "Parking" }, fontWeight = FontWeight.Bold)
-                        Text("Udaljenost: $distLabel", color = Color(0xFF546E7A))
+                        Text("Distance: $distLabel", color = Color(0xFF546E7A))
                     }
-                    TextButton(onClick = { selected = sp; showDetails = true }) { Text("DETALJI") }
+                    TextButton(onClick = { selected = sp; showDetails = true }) { Text("DETAILS") }
                 }
             }
         }
 
-        // Panel sa rezultatima (lista)
         AnimatedVisibility(
             visible = showFilteredList && !showDetails,
             enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(220)) + fadeIn(),
@@ -397,11 +368,11 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            "Rezultati (${filtered.size})",
+                            "Results (${filtered.size})",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        TextButton(onClick = { showFilteredList = false }) { Text("Zatvori") }
+                        TextButton(onClick = { showFilteredList = false }) { Text("Close") }
                     }
                     Divider()
                     if (filtered.isEmpty()) {
@@ -410,7 +381,7 @@ fun HomeScreen(
                                 .fillMaxWidth()
                                 .padding(24.dp),
                             contentAlignment = Alignment.Center
-                        ) { Text("Nema parkinga za zadate filtere.") }
+                        ) { Text("No parking matches your filters.") }
                     } else {
                         LazyColumn(
                             modifier = Modifier
@@ -471,7 +442,6 @@ fun HomeScreen(
                                 me = mePoint,
                                 reserved = justReserved,
                                 thresholdMeters = 150.0,
-                                // lokalna mapa za rate-limit; foreground poziv je jednokratan
                                 notifiedIds = mutableMapOf()
                             )
                         }
@@ -487,7 +457,6 @@ fun HomeScreen(
         )
     }
 
-    // Filter sheet
     if (showFilter) {
         ModalBottomSheet(onDismissRequest = { showFilter = false }) {
             FilterSheet(
@@ -495,7 +464,7 @@ fun HomeScreen(
                 onApply = { new ->
                     filter = new
                     showFilter = false
-                    showFilteredList = true // prikaži panel sa listom nakon primene
+                    showFilteredList = true
                 },
                 onReset = {
                     filter = ParkingFilter()
@@ -517,12 +486,11 @@ private fun FilterSheet(
     var maxPriceText by remember { mutableStateOf(initial.maxPricePerHour?.toString().orEmpty()) }
     var hasEv by remember { mutableStateOf(initial.hasEv) }
     var hasRamp by remember { mutableStateOf(initial.hasRamp) }
-    var isCovered by remember { mutableStateOf(initial.isCovered) }
     var maxDistText by remember { mutableStateOf(initial.maxDistanceMeters?.roundToInt()?.toString().orEmpty()) }
     var authorText by remember { mutableStateOf(initial.authorQuery) }
     var fromDate by remember { mutableStateOf(initial.fromDate) }
     var toDate by remember { mutableStateOf(initial.toDate) }
-    var hasDisabled by remember { mutableStateOf(initial.hasDisabledSpot) } // DODATO
+    var hasDisabled by remember { mutableStateOf(initial.hasDisabledSpot) }
 
 
 
@@ -532,33 +500,33 @@ private fun FilterSheet(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Filteri", style = MaterialTheme.typography.titleMedium)
+        Text("Filters", style = MaterialTheme.typography.titleMedium)
         Divider()
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = onlyAvailable, onCheckedChange = { onlyAvailable = it })
             Spacer(Modifier.width(8.dp))
-            Text("Samo dostupni (available > 0)")
+            Text("Only available")
         }
 
         OutlinedTextField(
             value = maxPriceText,
             onValueChange = { s -> if (s.all { it.isDigit() }) maxPriceText = s },
-            label = { Text("Max cena po satu (RSD)") },
+            label = { Text("Max hourly price (RSD)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            FilterChipSwitch("EV punjač", hasEv) { hasEv = it }
-            FilterChipSwitch("Rampa", hasRamp) { hasRamp = it }
-            FilterChipSwitch("Invalidsko mesto", hasDisabled) { hasDisabled = it }
+            FilterChipSwitch("EV charger", hasEv) { hasEv = it }
+            FilterChipSwitch("Ramp", hasRamp) { hasRamp = it }
+            FilterChipSwitch("Accessible spot", hasDisabled) { hasDisabled = it }
         }
 
         OutlinedTextField(
             value = maxDistText,
             onValueChange = { s -> if (s.all { it.isDigit() }) maxDistText = s },
-            label = { Text("Max distanca (m)") },
+            label = { Text("Max distance (m)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -566,7 +534,7 @@ private fun FilterSheet(
         OutlinedTextField(
             value = authorText,
             onValueChange = { authorText = it },
-            label = { Text("Autor (email)") },
+            label = { Text("Author (email)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -575,14 +543,14 @@ private fun FilterSheet(
             OutlinedTextField(
                 value = fromDate,
                 onValueChange = { fromDate = it },
-                label = { Text("Od (yyyy-MM-dd ili yyyy-MM-dd HH:mm)") },
+                label = { Text("From (yyyy-MM-dd or yyyy-MM-dd HH:mm)") },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = toDate,
                 onValueChange = { toDate = it },
-                label = { Text("Do (yyyy-MM-dd ili yyyy-MM-dd HH:mm)") },
+                label = { Text("To (yyyy-MM-dd or yyyy-MM-dd HH:mm)") },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
@@ -601,7 +569,6 @@ private fun FilterSheet(
                         maxPricePerHour = maxPriceText.toLongOrNull(),
                         hasEv = hasEv,
                         hasRamp = hasRamp,
-                        isCovered = isCovered,
                         hasDisabledSpot = hasDisabled,
                         maxDistanceMeters = maxDistText.toDoubleOrNull(),
                         authorQuery = authorText,
@@ -611,7 +578,7 @@ private fun FilterSheet(
                     onApply(new)
                 },
                 modifier = Modifier.weight(1f)
-            ) { Text("Primeni") }
+            ) { Text("Apply") }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -661,7 +628,7 @@ private fun FilterResultRow(
                     Text("Autor: ${item.createdByEmail}", color = Color(0xFF607D8B), fontSize = MaterialTheme.typography.bodySmall.fontSize)
                 }
             }
-            TextButton(onClick = onShowOnMap) { Text("Prikaži na mapi") }
+            TextButton(onClick = onShowOnMap) { Text("Show on map") }
         }
     }
 }
@@ -765,23 +732,18 @@ private fun MapboxMapView(
     var lastUserPoint by remember { mutableStateOf<Point?>(null) }
     var lastSentMillis by remember { mutableStateOf(0L) }
     val minSendIntervalMs = 10_000L
-
     var parkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
     val proximityMeters = 150.0
     val notifiedIds = remember { mutableStateMapOf<String, Long>() }
     var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
-
-    // Cache za email autora (uid -> email) da bi authorQuery radio i kada u parkings dokumentu nema email-a
     val authorEmailCache = remember { mutableStateMapOf<String, String>() }
-
     var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
     var mapClickListener: OnMapClickListener? by remember { mutableStateOf(null) }
     var moveListener: OnMoveListener? by remember { mutableStateOf(null) }
     var followMe by remember { mutableStateOf(false) }
-
-    // --- DODATO: GeofencingClient + PendingIntent za reserved spot ---
     val geofencingClient: GeofencingClient = remember { LocationServices.getGeofencingClient(context) }
+
     val geofencePendingIntent: PendingIntent = remember {
         val intent = Intent(context, ReservedGeofenceReceiver::class.java).apply {
             action = "com.stosic.parkup.home.GEOFENCE_RESERVED"
@@ -795,10 +757,8 @@ private fun MapboxMapView(
     }
 
     fun updateReservedGeofence(res: NearbyParking?) {
-        // Uvek prvo ukloni stare geofencove za ovaj PI
         geofencingClient.removeGeofences(geofencePendingIntent)
         if (res == null) return
-        // Zahteva ACCESS_FINE_LOCATION; za rad kada je app ugašen na Android 10+ preporučen ACCESS_BACKGROUND_LOCATION (manifest).
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
 
         val geofence = Geofence.Builder()
@@ -814,7 +774,7 @@ private fun MapboxMapView(
             .build()
 
         geofencingClient.addGeofences(request, geofencePendingIntent)
-            .addOnFailureListener { /* ignoriši, nema rušenja UI-a */ }
+            .addOnFailureListener { }
     }
 
     AndroidView(
@@ -859,7 +819,6 @@ private fun MapboxMapView(
                             onDistanceUpdateForReserved(d)
                         }
 
-                        // --- IZMENJENO: obaveštavaj SAMO za REZERVISANO mesto ---
                         maybeNotifyReservedSpotNearby(
                             context = context,
                             nm = NotificationManagerCompat.from(context),
@@ -909,7 +868,6 @@ private fun MapboxMapView(
         }
     )
 
-    // fokus kamere kad se promeni focusTarget
     LaunchedEffect(focusTarget, mapView) {
         val ft = focusTarget ?: return@LaunchedEffect
         val mv = mapView ?: return@LaunchedEffect
@@ -923,7 +881,6 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
-    // recentriranje
     LaunchedEffect(recenterSignal, mapView, lastUserPoint) {
         val mv = mapView ?: return@LaunchedEffect
         val p = lastUserPoint ?: return@LaunchedEffect
@@ -938,14 +895,13 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
-    // Real-time parkings + obogaćivanje email-om autora
     DisposableEffect(Unit) {
         parkingsReg = db.collection("parkings").addSnapshotListener { snap, _ ->
             val raw = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
                 val lng = d.getDouble("lng") ?: return@mapNotNull null
-                val createdBy = d.getString("createdBy") ?: "" // često UID
-                val createdByEmailField = d.getString("createdByEmail") // ako već postoji u dokumentu
+                val createdBy = d.getString("createdBy") ?: ""
+                val createdByEmailField = d.getString("createdByEmail")
 
                 NearbyParking(
                     id = d.id,
@@ -955,8 +911,8 @@ private fun MapboxMapView(
                     createdBy = createdBy,
                     createdByEmail = when {
                         !createdByEmailField.isNullOrBlank() -> createdByEmailField
-                        createdBy.contains("@") -> createdBy // ako je već email
-                        else -> authorEmailCache[createdBy] ?: "" // proba iz keša
+                        createdBy.contains("@") -> createdBy
+                        else -> authorEmailCache[createdBy] ?: ""
                     },
                     available = (d.getLong("availableSlots") ?: 0L),
                     capacity = d.getLong("capacity"),
@@ -968,7 +924,6 @@ private fun MapboxMapView(
                 )
             } ?: emptyList()
 
-            // Pronađi UIDs kojima fali email, pa dovuci iz users/{uid}.email (jednokratno po uid-u)
             val missingUids = raw.map { it.createdBy }
                 .filter { it.isNotBlank() && !it.contains("@") && authorEmailCache[it].isNullOrBlank() }
                 .distinct()
@@ -977,7 +932,6 @@ private fun MapboxMapView(
                 parkings = raw
                 onParkingsChanged(raw)
             } else {
-                // dovuci u pozadini; kad dobijemo, ažuriraj keš pa osveži listu
                 missingUids.forEach { u ->
                     db.collection("users").document(u).get()
                         .addOnSuccessListener { ud ->
@@ -985,7 +939,6 @@ private fun MapboxMapView(
                             if (email.isNotBlank()) authorEmailCache[u] = email
                         }
                         .addOnCompleteListener {
-                            // Nakon završetka svih fetch-eva, rekonstruiši listu sa email-ovima iz keša
                             val enriched = raw.map { p ->
                                 if (p.createdByEmail.isBlank() && !p.createdBy.contains("@")) {
                                     p.copy(createdByEmail = authorEmailCache[p.createdBy] ?: "")
@@ -995,7 +948,6 @@ private fun MapboxMapView(
                             onParkingsChanged(enriched)
                         }
                 }
-                // Privremeno prikaži i sirovu listu (da UI ne bude prazan)
                 parkings = raw
                 onParkingsChanged(raw)
             }
@@ -1035,7 +987,6 @@ private fun MapboxMapView(
         }
     }
 
-    // --- DODATO: reaguj na promenu rezervacije i ažuriraj geofence ---
     LaunchedEffect(reservedSpotState) {
         updateReservedGeofence(reservedSpotState)
     }
@@ -1063,11 +1014,11 @@ private fun PermissionRationale(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Potrebna je dozvola za lokaciju da bi se prikazala tvoja pozicija na mapi.")
+        Text("Location permission is required to display your location on the map.")
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onRequest) { Text("Dozvoli") }
-            Button(onClick = onOpenSettings) { Text("Podešavanja") }
+            Button(onClick = onRequest) { Text("Allow") }
+            Button(onClick = onOpenSettings) { Text("Settings") }
         }
     }
 }
@@ -1077,9 +1028,7 @@ private data class NearbyParking(
     val title: String,
     val lat: Double,
     val lng: Double,
-    // createdBy je obično UID
     val createdBy: String,
-    // email autora (za filtriranje po autoru)
     val createdByEmail: String,
     val available: Long,
     val capacity: Long?,
@@ -1087,7 +1036,6 @@ private data class NearbyParking(
     val hasEv: Boolean,
     val hasRamp: Boolean,
     val isCovered: Boolean,
-    // timestamp kreiranja (millis)
     val createdAt: Long
 )
 
@@ -1112,7 +1060,6 @@ private fun maybeSendLocation(
         .addOnSuccessListener { onSent(now) }
 }
 
-// --- NOVO: samo za REZERVISANO mesto, u foreground-u (dok je app aktivan) ---
 private fun maybeNotifyReservedSpotNearby(
     context: Context,
     nm: NotificationManagerCompat,
@@ -1131,7 +1078,7 @@ private fun maybeNotifyReservedSpotNearby(
         val key = "reserved:${r.id}"
         val last = notifiedIds[key] ?: 0L
         if (now - last >= 120_000L) {
-            val title = "Blizu si rezervisanog parkinga"
+            val title = "You’re close to your reserved spot"
             val text = "${r.title.ifBlank { "Parking" }} (~${dist.roundToInt()} m)"
             val notif = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -1165,10 +1112,8 @@ private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Doubl
     return R * c
 }
 
-// --- NOVO: BroadcastReceiver za geofence ENTER (radi i kada je app ugašen; treba manifest entry) ---
 class ReservedGeofenceReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // GeofencingClient šalje listu geofenci; mi koristimo prvi
         val geofencingEvent = com.google.android.gms.location.GeofencingEvent.fromIntent(intent) ?: return
         if (geofencingEvent.hasError()) return
         if (geofencingEvent.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) return

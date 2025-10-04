@@ -30,7 +30,7 @@ object AuthRepository {
         telefon: String
     ): Result<UserProfile> = try {
         val authResult = auth.createUserWithEmailAndPassword(email, password).await()
-        val uid = authResult.user?.uid ?: throw Exception("UID je null")
+        val uid = authResult.user?.uid ?: throw Exception("UID is null")
         val profile = UserProfile(uid, ime, prezime, telefon, email)
         db.collection("users").document(uid).set(profile).await()
         Result.success(profile)
