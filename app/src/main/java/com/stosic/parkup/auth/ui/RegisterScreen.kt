@@ -52,7 +52,7 @@ fun RegisterScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
-    fun isValidEmail(e: String): Boolean = Patterns.EMAIL_ADDRESS.matcher(e).matches()
+    fun isValidEmail(e: String): Boolean = Patterns.EMAIL_ADDRESS.matcher(e).matches() // checking email validation
     val emailValid by remember(email) { mutableStateOf(isValidEmail(email)) }
 
 
@@ -62,29 +62,24 @@ fun RegisterScreen(
             password.length >= 6 &&
             telefon.isNotBlank()
 
+    // colors
     val Blue = Color(0xFF42A5F5)
     val BlueField = Color(0xFF90CAF9)
     val Dark = Color(0xFF2B2B2B)
     val Outline = Color(0xFFFFFFFF)
 
-    val ctx = LocalContext.current
+    val ctx = LocalContext.current // required for MediaStore/SharedPreferences
 
-    var photoUri by remember { mutableStateOf<Uri?>(null) }
-
-    fun uriToBase64Thumbnail(context: Context, uri: Uri, maxSizePx: Int = 256, quality: Int = 80): String {
-        val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            ImageDecoder.createSource(context.contentResolver, uri)
-        } else {
-            @Suppress("DEPRECATION")
-            ImageDecoder.createSource(context.contentResolver, uri)
-        }
-        val original = ImageDecoder.decodeBitmap(source)
-        val scale = minOf(maxSizePx / original.width.toFloat(), maxSizePx / original.height.toFloat(), 1f)
+    var photoUri by remember { mutableStateOf<Uri?>(null) } // URI from gallery/camera
+    fun uriToBase64Thumbnail(context: Context, uri: Uri, maxSizePx: Int = 256, quality: Int = 80): String { // Load bitmap via ImageDecoder, reduce to max 256px, JPEG quality 80, return Base64.
+        val source = ImageDecoder.createSource(context.contentResolver, uri) // build an ImageDecoder Source from the Uri
+        val original = ImageDecoder.decodeBitmap(source) // decode the image into a Bitmap
+        val scale = minOf(maxSizePx / original.width.toFloat(), maxSizePx / original.height.toFloat(), 1f) // compute downscale factor so both sides fit within maxSizePx
         val w = (original.width * scale).toInt().coerceAtLeast(1)
         val h = (original.height * scale).toInt().coerceAtLeast(1)
-        val resized = Bitmap.createScaledBitmap(original, w, h, true)
-        val baos = ByteArrayOutputStream()
-        resized.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+        val resized = Bitmap.createScaledBitmap(original, w, h, true) // create a scaled thumbnail bitmap
+        val baos = ByteArrayOutputStream() // buffer to collect compressed bytes
+        resized.compress(Bitmap.CompressFormat.JPEG, quality, baos) // encode bitmap as JPEG into the buffer
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
@@ -95,24 +90,22 @@ fun RegisterScreen(
     }
 
     val takePhoto = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
+        contract = ActivityResultContracts.TakePicturePreview() // use the contract that opens camera and returns a small Bitmap (thumbnail)
     ) { bmp: Bitmap? ->
-        if (bmp != null) {
-            val resolver = ctx.contentResolver
-            val name = "profile_${System.currentTimeMillis()}.jpg"
-            val contentValues = ContentValues().apply {
+        if (bmp != null) { // proceed only if the user actually took a photo
+            val resolver = ctx.contentResolver // get ContentResolver to write into MediaStore (shared storage / gallery)
+            val name = "profile_${System.currentTimeMillis()}.jpg" // generate a unique filename based on current time
+            val contentValues = ContentValues().apply { // metadata for the new MediaStore entry
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ParkUp")
-                }
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ParkUp")
             }
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-            if (uri != null) {
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues) // create a new, empty media item and get its content Uri
+            if (uri != null) { // ensure the insert succeeded
                 resolver.openOutputStream(uri)?.use { out ->
-                    bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 80, out) // encode the Bitmap as JPEG (quality 80) to the stream
                 }
-                photoUri = uri
+                photoUri = uri // save the Uri in state so UI can display or upload the saved image
             }
         }
     }
@@ -195,7 +188,7 @@ fun RegisterScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // input polja
+            // input fields
             LabeledField("Name", ime, { ime = it }, "Enter your name", container = BlueField, outline = Outline, textColor = Dark)
             LabeledField("Last Name", prezime, { prezime = it }, "Enter your last name", container = BlueField, outline = Outline, textColor = Dark)
             LabeledField("Email", email, { email = it }, "Enter email address", container = BlueField, outline = Outline, textColor = Dark)

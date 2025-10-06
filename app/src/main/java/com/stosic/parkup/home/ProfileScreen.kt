@@ -105,6 +105,7 @@ fun ProfileScreen(
         }
     }
 
+    // gathering information from Firebase and filling in the details.
     DisposableEffect(uid) {
         if (uid != null) {
             userDocReg?.remove()
@@ -125,6 +126,7 @@ fun ProfileScreen(
         onDispose { userDocReg?.remove(); userDocReg = null }
     }
 
+    // calculation the rank
     DisposableEffect(uid) {
         usersReg?.remove()
         usersReg = db.collection("users")
@@ -140,7 +142,7 @@ fun ProfileScreen(
         onDispose { usersReg?.remove(); usersReg = null }
     }
 
-    // Pending Base64 iz registracije (SharedPreferences)
+    // Pending Base64 from registrations (SharedPreferences)
     LaunchedEffect(uid) {
         if (uid != null) {
             val prefs = ctx.getSharedPreferences("parkup_prefs", Context.MODE_PRIVATE)
@@ -487,11 +489,11 @@ private fun ProgressCard(points: Long) {
 @Composable
 private fun BadgesRow(points: Long) {
     val badges = listOf(
-        "Starter" to (points >= 0),
-        "Contributor" to (points >= 10),
-        "Helper" to (points >= 25),
-        "Pro" to (points >= 50),
-        "Elite" to (points >= 100)
+        "Starter" to (points >= 0), // newly created account
+        "Contributor" to (points >= 10), // at least 10 points
+        "Helper" to (points >= 50), // at least 50 points
+        "Pro" to (points >= 75), // at least 75 points
+        "Elite" to (points >= 100) // 100 and over
     )
     Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),

@@ -6,7 +6,6 @@ try { admin.initializeApp(); } catch (e) {}
 const db = admin.firestore();
 const fcm = admin.messaging();
 
-// Haversine (rezultat u metrima)
 function distanceMeters(aLat, aLng, bLat, bLng) {
   const toRad = (x) => x * Math.PI / 180;
   const R = 6371000;
@@ -17,7 +16,6 @@ function distanceMeters(aLat, aLng, bLat, bLng) {
   return 2 * R * Math.asin(Math.sqrt(sa));
 }
 
-// GLOBALNI FCM helper (sa channelId zbog Android 8+)
 async function sendFCM({ token, title, body, data }) {
   if (!token) return;
   try {
@@ -46,7 +44,6 @@ exports.notifyNearbyParking = functions.firestore
     const token = after.fcmToken;
     if (!token) return null;
 
-    // Učitaj do 200 parkinga koji su aktivni
     const ps = await db.collection("parkings")
       .where("active", "==", true)
       .limit(200)
@@ -105,14 +102,6 @@ exports.notifyNearbyParking = functions.firestore
     return null;
   });
 
-/**
- * Trigger: svaka promena na users/{uid}
- * Očekuje polja: lat, lng, fcmToken (na primaocu), displayName (opciono)
- * Logika:
- *  - Nađe druge korisnike u krugu ≤ 150 m
- *  - Cooldown po paru (A vidi B): users/{A}/nearbyUsers/{B}.notifiedAt = 2h
- *  - NOTIFIKACIJU ŠALJEMO KORISNIKU KOJI SE POMERIO (uid) o onima koji su blizu njega
- */
 exports.notifyNearbyUser = functions.firestore
   .document("users/{uid}")
   .onWrite(async (change, context) => {
@@ -123,11 +112,9 @@ exports.notifyNearbyUser = functions.firestore
     const lat = after.lat, lng = after.lng;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-    // primaoc mora imati token
     const receiverToken = after.fcmToken;
     if (!receiverToken) return null;
 
-    // Učitaj do N drugih korisnika (filtar po postojanju fcmToken-a nije uvek moguć – fallback na limit)
     const qs = await db.collection("users").limit(300).get();
 
     const now = Date.now();
@@ -135,7 +122,7 @@ exports.notifyNearbyUser = functions.firestore
 
     const candidates = [];
     for (const doc of qs.docs) {
-      if (doc.id === uid) continue; // preskoči sebe
+      if (doc.id === uid) continue;
       const u = doc.data() || {};
       const uLat = u.lat, uLng = u.lng;
       if (!Number.isFinite(uLat) || !Number.isFinite(uLng)) continue;
@@ -143,7 +130,6 @@ exports.notifyNearbyUser = functions.firestore
       const dist = distanceMeters(lat, lng, uLat, uLng);
       if (dist > radiusM) continue;
 
-      // cooldown: A (uid) vidi B (doc.id)
       const keyRef = db.collection("users").doc(uid)
         .collection("nearbyUsers").doc(doc.id);
       const snap = await keyRef.get();
@@ -164,7 +150,6 @@ exports.notifyNearbyUser = functions.firestore
     candidates.sort((a, b) => a.dist - b.dist);
     const best = candidates[0];
 
-    // STVARNO POŠALJI FCM (ovo si slučajno izbacio ranije)
     await sendFCM({
       token: receiverToken,
       title: `Korisnik u blizini: ${best.otherName}`,
@@ -190,7 +175,6 @@ function onlyRankChanged(change) {
   return changed.length === 1 && changed[0] === "rank";
 }
 
-/** Pročitaj sve users, sort po points (DESC), pa upiši rank (1-based). */
 async function recomputeAllRanks() {
   const snap = await db.collection("users").get();
 
@@ -209,7 +193,6 @@ async function recomputeAllRanks() {
     return a.nameKey.localeCompare(b.nameKey, "sr", { sensitivity: "base" });
   });
 
-  // batch u turama (da ne probijemo limit)
   let batch = db.batch();
   let ops = 0;
   for (let i = 0; i < users.length; i++) {
@@ -224,7 +207,6 @@ async function recomputeAllRanks() {
   if (ops > 0) await batch.commit();
 }
 
-/** Trigger: svaka promena users/{uid}. Ako nije samo `rank`, preracunaj sve. */
 exports.recomputeRanksOnWrite = functions.firestore
   .document("users/{uid}")
   .onWrite(async (change) => {
@@ -256,22 +238,19 @@ exports.onUserPointsChange = functions.firestore
     const beforePoints = change.before.exists ? (change.before.get("points") || 0) : null;
     const afterPoints  = change.after.exists  ? (change.after.get("points")  || 0) : null;
 
-    // Nema promene poena → nema posla
     if (beforePoints === afterPoints) return null;
 
     console.log(`[Ranks] Points changed for ${context.params.uid}: ${beforePoints} -> ${afterPoints}`);
 
-    // Povuci SVE korisnike sortirane po points DESC
     const snap = await db.collection("users").orderBy("points", "desc").get();
 
-    // Batch-uj update rank polja: prvi dobija 1, drugi 2, ...
-    const BATCH_SIZE = 400; // < 500 da izbegnemo limit
+    const BATCH_SIZE = 400;
     let batch = db.batch();
     let ops = 0;
     let rank = 1;
 
     for (const doc of snap.docs) {
-      batch.update(doc.ref, { rank }); // SAMO server piše "rank" (vidi rules)
+      batch.update(doc.ref, { rank });
       rank++;
       ops++;
 
@@ -287,7 +266,6 @@ exports.onUserPointsChange = functions.firestore
     return null;
   });
 
-// --- MIRROR: ako su rezervacije pod parkingom: parkings/{pid}/reservations/{userOrResId}
 exports.mirrorActiveReservationToUser_parkingSubcollection = functions.firestore
   .document("parkings/{pid}/reservations/{userOrResId}")
   .onWrite(async (change, context) => {
@@ -296,7 +274,6 @@ exports.mirrorActiveReservationToUser_parkingSubcollection = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     if (!after && !before) return null;
 
-    // Probaj userId iz polja; ako ga nema, pretpostavi docId = uid
     const uid = (after && after.userId) || (before && before.userId) || userOrResId;
     if (!uid) return null;
 
@@ -312,12 +289,10 @@ exports.mirrorActiveReservationToUser_parkingSubcollection = functions.firestore
     return null;
   });
 
-// --- ROBUSTNI finder rezervacije + notifyReservedProximity ---
 
 const { FieldPath } = admin.firestore;
 
 async function findActiveReservationForUser(uid) {
-  // 1) Top-level `reservations` sa userId + createdAt
   try {
     const snap = await db.collection("reservations")
       .where("userId", "==", uid)
@@ -333,7 +308,6 @@ async function findActiveReservationForUser(uid) {
     console.log("[resv finder] top-level with createdAt failed:", e.message);
   }
 
-  // 2) collectionGroup('reservations') sa userId + createdAt
   try {
     const snap = await db.collectionGroup("reservations")
       .where("userId", "==", uid)
@@ -349,7 +323,6 @@ async function findActiveReservationForUser(uid) {
     console.log("[resv finder] cgroup userId+createdAt failed:", e.message);
   }
 
-  // 3) collectionGroup('reservations') bez userId – pretpostavka docId = uid + orderBy(updatedAt)
   try {
     const snap = await db.collectionGroup("reservations")
       .where(FieldPath.documentId(), "==", uid)
@@ -365,7 +338,6 @@ async function findActiveReservationForUser(uid) {
     console.log("[resv finder] cgroup docId==uid failed:", e.message);
   }
 
-  // 4) fallback: ako user već ima activeReservationParkingId
   try {
     const u = (await db.collection("users").doc(uid).get()).data() || {};
     if (u.activeReservationParkingId) {

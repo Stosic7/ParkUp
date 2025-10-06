@@ -34,15 +34,15 @@ object MapboxParkingOverlay {
     private const val LYR_RED   = "parkings-lyr-red"
     private const val IMG_GREEN = "parking-green"
     private const val IMG_RED   = "parking-red"
-    private var reg: ListenerRegistration? = null
-    private var currentSpots: List<ParkingSpot> = emptyList()
+    private var reg: ListenerRegistration? = null // Firestore listener for 'parkings'
+    private var currentSpots: List<ParkingSpot> = emptyList() // local cache spots
     private var srcGreenRef: GeoJsonSource? = null
     private var srcRedRef: GeoJsonSource? = null
-    private var clickListener: OnMapClickListener? = null
-    private var userReg: ListenerRegistration? = null
+    private var clickListener: OnMapClickListener? = null // Mapbox tap listener
+    private var userReg: ListenerRegistration? = null // listener on 'users/{uid}' document
     private var myLat: Double? = null
     private var myLng: Double? = null
-    private var searchRadiusMeters: Int = 0
+    private var searchRadiusMeters: Int = 0 // radius filter (0 = no filter)
 
     fun install(
         mapView: MapView,
@@ -91,6 +91,7 @@ object MapboxParkingOverlay {
         style.addLayer(layerGreen)
         style.addLayer(layerRed)
 
+        // realtime listening Firestore 'parkings', convert to list ParkingSpot, updateSources()
         reg?.remove()
         reg = FirebaseFirestore.getInstance()
             .collection("parkings")
@@ -100,6 +101,8 @@ object MapboxParkingOverlay {
                 updateSources(list)
             }
 
+
+        // listening to 'users/{uid}' to get my location + radius filter (to filter spots)
         val uid = FirebaseAuth.getInstance().currentUser?.uid
         userReg?.remove()
         if (uid != null) {
@@ -113,9 +116,10 @@ object MapboxParkingOverlay {
                 }
         }
 
+        // click on the map, find the nearest spot within 50m, trigger callback
         clickListener?.let { mapView.gestures.removeOnMapClickListener(it) }
         clickListener = OnMapClickListener { lngLat ->
-            val spot = nearestSpot(currentSpots, lngLat.latitude(), lngLat.longitude(), 30.0)
+            val spot = nearestSpot(currentSpots, lngLat.latitude(), lngLat.longitude(), 50.0)
             if (spot != null) {
                 onMarkerClick?.invoke(spot)
             }
@@ -124,6 +128,7 @@ object MapboxParkingOverlay {
         mapView.gestures.addOnMapClickListener(clickListener!!)
     }
 
+    // If we have my location and radius > 0, filter on "within searchRadius"
     private fun updateSources(spots: List<ParkingSpot>) {
         val greenFeats = ArrayList<Feature>()
         val redFeats = ArrayList<Feature>()
@@ -136,6 +141,7 @@ object MapboxParkingOverlay {
             spots
         }
 
+        // mapping into Feature + label
         for (p in filtered) {
             val f = Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat))
             val label = when {
@@ -152,6 +158,7 @@ object MapboxParkingOverlay {
         srcRedRef?.featureCollection(FeatureCollection.fromFeatures(redFeats))
     }
 
+    // draws a "flag on a stick" (marker icon) in color.
     private fun createCircleBitmap(color: Int, size: Int = 64): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -185,6 +192,7 @@ object MapboxParkingOverlay {
         return bmp
     }
 
+    // Finds the closest ParkingSpot from the passed lat/lng point.
     private fun nearestSpot(
         spots: List<ParkingSpot>,
         lat: Double,

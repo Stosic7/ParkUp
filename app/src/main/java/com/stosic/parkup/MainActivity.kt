@@ -43,37 +43,35 @@ class MainActivity : ComponentActivity() {
     private val auth by lazy { FirebaseAuth.getInstance() }
     private val db by lazy { FirebaseFirestore.getInstance() }
 
-    private val requestPerms = registerForActivityResult(
+    private val requestPerms = registerForActivityResult( // requesting for permission
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         maybeStartLocationService()
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) { // rendering the root of the application
         super.onCreate(savedInstanceState)
         setContent { AppRoot() }
         val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            perms += Manifest.permission.POST_NOTIFICATIONS
-        }
+        perms += Manifest.permission.POST_NOTIFICATIONS
         requestPerms.launch(perms.toTypedArray())
-        auth.addAuthStateListener { fa ->
-            val user = fa.currentUser
+        auth.addAuthStateListener { fa -> // reacting to login/logout
+            val user = fa.currentUser // if the user is logged in: take the FCM token and write it in users/{uid}.fcmToken
             if (user != null) {
                 FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
                     db.collection("users").document(user.uid)
                         .update(mapOf("fcmToken" to token))
                 }
-                RankAutoUpdater.start()
-                maybeStartLocationService()
-            } else {
-                RankAutoUpdater.stop()
+                RankAutoUpdater.start() // start automatic rank updater
+                maybeStartLocationService() // start foreground location service.
+            } else { // If not
+                RankAutoUpdater.stop() // turn off the rank updater and the location service.
                 stopService(Intent(this, LocationUpdatesService::class.java))
             }
         }
     }
 
-    private fun maybeStartLocationService() {
+    private fun maybeStartLocationService() { // If there is a logged-in user, turn on LocationUpdatesService as foreground (notification is mandatory).
         val user = auth.currentUser ?: return
         val intent = Intent(this, LocationUpdatesService::class.java)
         ContextCompat.startForegroundService(this, intent)
@@ -125,7 +123,8 @@ fun AuthHost() {
         CustomPopup(message = message!!, onDismiss = { showDialog = false })
     }
     var userDocReg by remember { mutableStateOf<com.google.firebase.firestore.ListenerRegistration?>(null) }
-    DisposableEffect(auth.currentUser?.uid) {
+    DisposableEffect(auth.currentUser?.uid) { //subscribe to users/{uid} while the user is logged in; on every change fill the local userData map so that HomeContent has fresh data.
+                                            //DisposableEffect ensures that we remove the listener when the uid changes or the composable exits the composition.
         val uid = auth.currentUser?.uid
         if (uid != null) {
             userDocReg = db.collection("users").document(uid)

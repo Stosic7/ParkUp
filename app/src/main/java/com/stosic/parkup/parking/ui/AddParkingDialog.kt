@@ -63,14 +63,8 @@ fun AddParkingDialog(
     var zone by remember { mutableStateOf("green") }            // "green" | "red" | "extra"
 
     fun uriToBase64(uri: Uri, maxSize: Int = 1024, quality: Int = 85): String {
-        val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val bmp: Bitmap =
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, uri))
-        } else {
-            ctx.contentResolver.openInputStream(uri).use { input ->
-                requireNotNull(input)
-                BitmapFactory.decodeStream(input)
-            }
-        }
         val scale = minOf(maxSize / bmp.width.toFloat(), maxSize / bmp.height.toFloat(), 1f)
         val w = (bmp.width * scale).toInt().coerceAtLeast(1)
         val h = (bmp.height * scale).toInt().coerceAtLeast(1)
@@ -100,9 +94,7 @@ fun AddParkingDialog(
             val cv = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ParkUp")
-                }
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ParkUp")
             }
             val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
             if (uri != null) {
@@ -116,8 +108,10 @@ fun AddParkingDialog(
 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Read Mapbox token from AndroidManifest meta-data or strings.xml (fallback)
     val mapboxToken by remember { mutableStateOf(readMapboxToken(ctx)) }
 
+    // On every query change: if >=3 chars, call Mapbox geocoding (background) and show suggestions.
     LaunchedEffect(query) {
         picked = null
         if (query.length < 3) {
@@ -131,6 +125,7 @@ fun AddParkingDialog(
         }
     }
 
+    // The modal dialog that wraps the whole Add Parking form and actions.
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Add parking spot") },
@@ -387,6 +382,7 @@ private data class AddressSuggestion(
     val lng: Double
 )
 
+// gathering MapBox token from AndroidManifest to geocode the address
 private fun readMapboxToken(ctx: android.content.Context): String {
     runCatching {
         val ai = ctx.packageManager.getApplicationInfo(ctx.packageName, PackageManager.GET_META_DATA)
@@ -399,6 +395,7 @@ private fun readMapboxToken(ctx: android.content.Context): String {
     return runCatching { ctx.getString(R.string.mapbox_access_token) }.getOrDefault("")
 }
 
+// geocode suggestions, called back in query for suggesting after 3 characters
 private suspend fun geocodeSuggestions(query: String, token: String): List<AddressSuggestion> =
     withContext(Dispatchers.IO) {
         val q = URLEncoder.encode(query, "UTF-8")

@@ -19,16 +19,15 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun LoginScreen(
-    onLoginClick: (email: String, password: String) -> Unit,
-    onForgotPassword: (email: String) -> Unit,
-    onNavigateToRegister: () -> Unit,
+    onLoginClick: (email: String, password: String) -> Unit, // basic login
+    onForgotPassword: (email: String) -> Unit, // sending email
+    onNavigateToRegister: () -> Unit, // traverse to registration
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-
     val canSubmit = email.isNotBlank() && password.length >= 6
 
-    // boje
+    // colors
     val Blue = Color(0xFF42A5F5)
     val BlueField = Color(0xFF90CAF9)
     val Dark = Color(0xFF2B2B2B)
@@ -127,11 +126,12 @@ fun LoginScreen(
                     .fillMaxWidth()
                     .height(56.dp)
             ) {
-                Text("Log In", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Sign In", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
             }
 
             Spacer(Modifier.height(12.dp))
 
+            // traverse to registration page
             TextButton(onClick = onNavigateToRegister) {
                 Text("Don't have an account? Sign up.", color = Outline)
             }
@@ -139,6 +139,7 @@ fun LoginScreen(
     }
 }
 
+// used to email and password inputs
 @Composable
 private fun LabeledField(
     label: String,

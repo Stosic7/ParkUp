@@ -53,10 +53,12 @@ import com.stosic.parkup.leaderboard.model.LbEntry
 fun LeaderboardScreen(
     onBack: () -> Unit
 ) {
+    // Firestore handle + UI state for leaderboard entries and loading flag
     val db = remember { FirebaseFirestore.getInstance() }
     var entries by remember { mutableStateOf<List<LbEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
 
+    // Live-listen 'users' collection; map docs -> LbEntry, sort by LB_COMPARATOR, stop listening on dispose
     DisposableEffect(Unit) {
         val reg = db.collection("users")
             .addSnapshotListener { snap, _ ->
@@ -69,6 +71,7 @@ fun LeaderboardScreen(
         onDispose { reg.remove() }
     }
 
+    // Precompute: count duplicate display names (for disambiguation) and take top 3 for podium
     val nameCounts = remember(entries) { entries.groupingBy { it.fullName }.eachCount() }
     val podium = remember(entries) { entries.take(3) }
 

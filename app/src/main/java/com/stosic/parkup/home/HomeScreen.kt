@@ -80,6 +80,7 @@ import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 
+// Parking filter model: holds all user-selected filter options and exposes isActive flag
 private data class ParkingFilter(
     val onlyAvailable: Boolean = false,
     val maxPricePerHour: Long? = null,
@@ -102,12 +103,12 @@ private data class ParkingFilter(
                 fromDate.isNotBlank() || toDate.isNotBlank()
 }
 
+// Filter predicate: returns true if a NearbyParking matches the current filter rules
 private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean {
     if (onlyAvailable && p.available <= 0L) return false
     if (maxPricePerHour != null && p.pricePerHour > maxPricePerHour) return false
     if (hasEv && !p.hasEv) return false
     if (hasRamp && !p.hasRamp) return false
-    if (isCovered && !p.isCovered) return false
     if (maxDistanceMeters != null && userPoint != null) {
         val d = distanceMeters(userPoint.latitude(), userPoint.longitude(), p.lat, p.lng)
         if (d > maxDistanceMeters) return false
@@ -119,6 +120,7 @@ private fun ParkingFilter.matches(p: NearbyParking, userPoint: Point?): Boolean 
     return true
 }
 
+// Camera focus request for Mapbox: where and how much to zoom, with a nonce to re-trigger effects
 private data class FocusTarget(
     val lat: Double,
     val lng: Double,
@@ -126,6 +128,7 @@ private data class FocusTarget(
     val nonce: Long = System.currentTimeMillis()
 )
 
+// Home map screen: owns map UI state, filtering, selection, reservation and overlays
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -134,6 +137,7 @@ fun HomeScreen(
     onOverlayVisible: (Boolean) -> Unit = {},
     onUiLockedChange: (Boolean) -> Unit = {}
 ) {
+    // Core UI state: add dialog, selected item, details panel, reservation state, last user point, filters
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     var showAdd by remember { mutableStateOf(false) }
@@ -147,6 +151,7 @@ fun HomeScreen(
     var showFilteredList by remember { mutableStateOf(false) }
     var allParkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
 
+    // Parse helper: accepts "yyyy-MM-dd" or "yyyy-MM-dd HH:mm" and returns epoch millis (or null)
     fun parseDateFlexible(s: String): Long? {
         if (s.isBlank()) return null
         val patterns = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd")
@@ -161,6 +166,7 @@ fun HomeScreen(
         return null
     }
 
+    // Derived state: apply filter rules + optional date range + sort by distance from user
     val filtered = remember(allParkings, filter, lastUserPoint) {
         val base = allParkings.filter { filter.matches(it, lastUserPoint) }
         val fromMillis = parseDateFlexible(filter.fromDate) ?: Long.MIN_VALUE
@@ -181,14 +187,17 @@ fun HomeScreen(
         }
     }
 
+    // Map focus and recenter controls: target, whether to show recenter button, and a recenter signal
     var focusTarget by remember { mutableStateOf<FocusTarget?>(null) }
     var showRecenter by remember { mutableStateOf(false) }
     var recenterSignal by remember { mutableStateOf<Long?>(null) }
 
+    // Report overlay and UI lock to parent (hide FABs/filters, disable top bar when reserved/details)
     val overlayVisible = (!showDetails && reserved == null)
     LaunchedEffect(showDetails, reserved) { onOverlayVisible(overlayVisible) }
     LaunchedEffect(reserved) { onUiLockedChange(reserved != null) }
 
+    // Main content stack: Map view + FABs + transient panels (selection card, reserved banner, results list)
     Box(Modifier.fillMaxSize()) {
         MapboxMapView(
             modifier = Modifier.fillMaxSize(),
@@ -204,6 +213,7 @@ fun HomeScreen(
             recenterSignal = recenterSignal
         )
 
+        // Add-parking FAB: visible only when no details/reservation are shown
         AnimatedVisibility(
             visible = !showDetails && reserved == null,
             modifier = Modifier
@@ -216,6 +226,7 @@ fun HomeScreen(
             }
         }
 
+        // Filter FAB (with small green dot when filters are active)
         AnimatedVisibility(
             visible = !showDetails && reserved == null,
             modifier = Modifier
@@ -243,6 +254,7 @@ fun HomeScreen(
             }
         }
 
+        // Recenter button: appears when user manually moves the map; recenters to current location
         AnimatedVisibility(
             visible = showRecenter && !showDetails,
             enter = fadeIn(tween(180)),
@@ -264,6 +276,7 @@ fun HomeScreen(
             }
         }
 
+        // Bottom selection card: quick info and 'Details' action for the tapped parking
         AnimatedVisibility(
             visible = selected != null && !showDetails && reserved == null,
             modifier = Modifier
@@ -304,6 +317,7 @@ fun HomeScreen(
             }
         }
 
+        // Top reservation banner: shows when a spot is reserved; includes distance and 'DETAILS' action
         AnimatedVisibility(
             visible = reserved != null,
             modifier = Modifier
@@ -342,6 +356,7 @@ fun HomeScreen(
             }
         }
 
+        // Floating filtered results panel: list of filtered parkings with 'Show on map' action// Floating filtered results panel: list of filtered parkings with 'Show on map' action
         AnimatedVisibility(
             visible = showFilteredList && !showDetails,
             enter = slideInVertically(initialOffsetY = { -it }, animationSpec = tween(220)) + fadeIn(),
@@ -410,6 +425,7 @@ fun HomeScreen(
         }
     }
 
+    // Add parking dialog: shown when FAB pressed; closes on dismiss/save
     if (showAdd) {
         AddParkingDialog(
             onDismiss = { showAdd = false },
@@ -417,6 +433,7 @@ fun HomeScreen(
         )
     }
 
+    // Parking details screen: handles reserve/cancel and triggers proximity notification when applicable
     if (showDetails && selected != null) {
         ParkingDetailsScreen(
             parkingId = selected!!.id,
@@ -457,6 +474,7 @@ fun HomeScreen(
         )
     }
 
+    // Filter bottom sheet: compose and apply/reset current ParkingFilter
     if (showFilter) {
         ModalBottomSheet(onDismissRequest = { showFilter = false }) {
             FilterSheet(
@@ -476,12 +494,14 @@ fun HomeScreen(
     }
 }
 
+// Filter editor sheet: controlled inputs for all filter fields, returns a ParkingFilter on Apply
 @Composable
 private fun FilterSheet(
     initial: ParkingFilter,
     onApply: (ParkingFilter) -> Unit,
     onReset: () -> Unit
 ) {
+    // Local state mirrors: text/booleans bound to inputs; initialized from 'initial'
     var onlyAvailable by remember { mutableStateOf(initial.onlyAvailable) }
     var maxPriceText by remember { mutableStateOf(initial.maxPricePerHour?.toString().orEmpty()) }
     var hasEv by remember { mutableStateOf(initial.hasEv) }
@@ -490,10 +510,8 @@ private fun FilterSheet(
     var authorText by remember { mutableStateOf(initial.authorQuery) }
     var fromDate by remember { mutableStateOf(initial.fromDate) }
     var toDate by remember { mutableStateOf(initial.toDate) }
-    var hasDisabled by remember { mutableStateOf(initial.hasDisabledSpot) }
 
-
-
+    // Layout with inputs: toggles, numeric fields, author email, and date range
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -520,7 +538,6 @@ private fun FilterSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             FilterChipSwitch("EV charger", hasEv) { hasEv = it }
             FilterChipSwitch("Ramp", hasRamp) { hasRamp = it }
-            FilterChipSwitch("Accessible spot", hasDisabled) { hasDisabled = it }
         }
 
         OutlinedTextField(
@@ -556,6 +573,7 @@ private fun FilterSheet(
             )
         }
 
+        // Actions: Reset to defaults or Apply to return a new ParkingFilter to caller
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -569,7 +587,6 @@ private fun FilterSheet(
                         maxPricePerHour = maxPriceText.toLongOrNull(),
                         hasEv = hasEv,
                         hasRamp = hasRamp,
-                        hasDisabledSpot = hasDisabled,
                         maxDistanceMeters = maxDistText.toDoubleOrNull(),
                         authorQuery = authorText,
                         fromDate = fromDate.trim(),
@@ -585,6 +602,7 @@ private fun FilterSheet(
     }
 }
 
+// Tiny toggle chip used in FilterSheet: colored dot indicates ON/OFF
 @Composable
 private fun FilterChipSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     AssistChip(
@@ -600,6 +618,7 @@ private fun FilterChipSwitch(label: String, checked: Boolean, onCheckedChange: (
     )
 }
 
+// One row in the filtered results list: shows summary + 'Show on map' action
 @Composable
 private fun FilterResultRow(
     item: NearbyParking,
@@ -622,10 +641,10 @@ private fun FilterResultRow(
                     if (d < 1000) "${d.roundToInt()} m" else String.format("%.1f km", d / 1000.0)
                 } ?: "—"
                 val cap = item.capacity?.let { "${item.available}/$it" } ?: "${item.available}"
-                Text("Udaljenost: $distLabel", color = Color(0xFF546E7A))
-                Text("Slobodno: $cap  •  ${item.pricePerHour} RSD/h", color = Color(0xFF546E7A))
+                Text("Distance: $distLabel", color = Color(0xFF546E7A))
+                Text("Available: $cap  •  ${item.pricePerHour} RSD/h", color = Color(0xFF546E7A))
                 if (item.createdByEmail.isNotBlank()) {
-                    Text("Autor: ${item.createdByEmail}", color = Color(0xFF607D8B), fontSize = MaterialTheme.typography.bodySmall.fontSize)
+                    Text("Author: ${item.createdByEmail}", color = Color(0xFF607D8B), fontSize = MaterialTheme.typography.bodySmall.fontSize)
                 }
             }
             TextButton(onClick = onShowOnMap) { Text("Show on map") }
@@ -635,31 +654,31 @@ private fun FilterResultRow(
 
 // ---------- Map ----------
 
+// Mapbox wrapper: manages permissions, MapView lifecycle, listeners, geofencing and proximity notifications
 @Composable
 @Suppress("MissingPermission")
 private fun MapboxMapView(
     modifier: Modifier = Modifier,
-    onUserPoint: (Point) -> Unit,
-    onParkingTapped: (NearbyParking) -> Unit,
-    onDistanceUpdateForReserved: (Double) -> Unit,
-    reservedSpot: NearbyParking?,
+    onUserPoint: (Point) -> Unit, // send the parent (HomeScreen) the user's current location.
+    onParkingTapped: (NearbyParking) -> Unit, // when you click on the map, you find the closest parking lot to the clicked point (≤50m) and report it above.
+    onDistanceUpdateForReserved: (Double) -> Unit, // constantly calculate the distance user <-> reserved parking
+    reservedSpot: NearbyParking?, // if a place is reserved, the Mapbox part knows how to track the distance and set a geofence.
     filter: ParkingFilter,
     userPointForFilter: Point?,
-    onParkingsChanged: (List<NearbyParking>) -> Unit,
-    focusTarget: FocusTarget?,
-    onUserMapGesture: () -> Unit,
-    recenterSignal: Long?
+    onParkingsChanged: (List<NearbyParking>) -> Unit, // when the firestore snapshot arrives, upload the whole list
+    focusTarget: FocusTarget?, // when someone clicks "Show on map" in the list, tell the map where to go.
+    onUserMapGesture: () -> Unit, // user moved the map, show “Recenter”.
+    recenterSignal: Long? // ping from parent to recenter and follow user.
 ) {
+    // Permission and notification setup: location + (Android 13+) POST_NOTIFICATIONS + channel creation
     val context = LocalContext.current
     val activity = context as? Activity
-    var hasPermission by remember { mutableStateOf(hasLocationPermission(context)) }
-
+    var hasPermission by remember { mutableStateOf(hasLocationPermission(context)) } // catching location state from the OS
     val reservedSpotState by rememberUpdatedState(reservedSpot)
     val filterState by rememberUpdatedState(filter)
     val userPointState by rememberUpdatedState(userPointForFilter)
-
     val notificationChannelId = remember { "nearby_events" }
-    val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val wantNotifPermission = true
     var hasNotifPermission by remember {
         mutableStateOf(
             !wantNotifPermission || ContextCompat.checkSelfPermission(
@@ -673,20 +692,19 @@ private fun MapboxMapView(
         }
     } else null
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(
-                notificationChannelId,
-                "Blizina (ParkUp)",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(ch)
-        }
+        val ch = NotificationChannel(
+            notificationChannelId,
+            "Blizina (ParkUp)",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(ch)
         if (wantNotifPermission && !hasNotifPermission) {
             notifPermissionLauncher?.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
+    // Runtime location permission request flow (fine/coarse); show rationale screen if denied
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -725,25 +743,27 @@ private fun MapboxMapView(
         return
     }
 
+    // Firebase and Map state: map view, user point, rate-limited location writes, parking list and listeners
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
-    var mapView: MapView? by remember { mutableStateOf(null) }
-    var lastUserPoint by remember { mutableStateOf<Point?>(null) }
-    var lastSentMillis by remember { mutableStateOf(0L) }
-    val minSendIntervalMs = 10_000L
-    var parkings by remember { mutableStateOf(emptyList<NearbyParking>()) }
-    val proximityMeters = 150.0
+    var mapView: MapView? by remember { mutableStateOf(null) } // reference to real Android MapView
+    var lastUserPoint by remember { mutableStateOf<Point?>(null) } // last known user location
+    var lastSentMillis by remember { mutableStateOf(0L) } // send location
+    val minSendIntervalMs = 10_000L // max 10s
+    var parkings by remember { mutableStateOf(emptyList<NearbyParking>()) } // list of parkings from firestore
+    val proximityMeters = 150.0 // proximity meters for notification
     val notifiedIds = remember { mutableStateMapOf<String, Long>() }
-    var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+    var parkingsReg by remember { mutableStateOf<ListenerRegistration?>(null) } // snapshot from firestore
     val authorEmailCache = remember { mutableStateMapOf<String, String>() }
-    var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
-    var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) }
-    var mapClickListener: OnMapClickListener? by remember { mutableStateOf(null) }
-    var moveListener: OnMoveListener? by remember { mutableStateOf(null) }
-    var followMe by remember { mutableStateOf(false) }
-    val geofencingClient: GeofencingClient = remember { LocationServices.getGeofencingClient(context) }
+    var trackingListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) } // mapbox listener
+    var positionListener: OnIndicatorPositionChangedListener? by remember { mutableStateOf(null) } // mapbox listener
+    var mapClickListener: OnMapClickListener? by remember { mutableStateOf(null) } // mapbox listener
+    var moveListener: OnMoveListener? by remember { mutableStateOf(null) } // mapbox listener
+    var followMe by remember { mutableStateOf(false) } // lock the camera to the target
+    val geofencingClient: GeofencingClient = remember { LocationServices.getGeofencingClient(context) } // for reserved parking
 
+    // PendingIntent for geofence events: broadcast received by ReservedGeofenceReceiver
     val geofencePendingIntent: PendingIntent = remember {
         val intent = Intent(context, ReservedGeofenceReceiver::class.java).apply {
             action = "com.stosic.parkup.home.GEOFENCE_RESERVED"
@@ -752,15 +772,18 @@ private fun MapboxMapView(
             context,
             1001,
             intent,
-            (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0) or PendingIntent.FLAG_UPDATE_CURRENT
+            (PendingIntent.FLAG_IMMUTABLE) or PendingIntent.FLAG_UPDATE_CURRENT
         )
     }
 
+    // Create/replace geofence for the reserved spot; triggers on ENTER within proximityMeters
     fun updateReservedGeofence(res: NearbyParking?) {
         geofencingClient.removeGeofences(geofencePendingIntent)
+        // if we have FINE location and reserved parking, create geofence
         if (res == null) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
 
+        // create Geofence (requestId = “id|title”, radius = 150m, trigger = ENTER).
         val geofence = Geofence.Builder()
             .setRequestId("${res.id}|${res.title}")
             .setCircularRegion(res.lat, res.lng, proximityMeters.toFloat())
@@ -773,18 +796,21 @@ private fun MapboxMapView(
             .addGeofence(geofence)
             .build()
 
+        // When the user enters the circle, the ReservedGeofenceReceiver receives an event and sends a local notification.
         geofencingClient.addGeofences(request, geofencePendingIntent)
             .addOnFailureListener { }
     }
 
+    // AndroidView bridging Mapbox MapView into Compose; sets style and installs listeners
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
             MapView(ctx).apply {
                 mapView = this
                 getMapboxMap().loadStyleUri(Style.MAPBOX_STREETS) {
-                    com.stosic.parkup.parking.map.MapboxParkingOverlay.install(this)
+                    com.stosic.parkup.parking.map.MapboxParkingOverlay.install(this) // setup parking pins
                     if (hasLocationPermission(context)) {
+                        // if location is enabled, show blue dot that represents a user on the map
                         try {
                             location.updateSettings {
                                 enabled = true
@@ -793,6 +819,7 @@ private fun MapboxMapView(
                         } catch (_: SecurityException) { }
                     }
 
+                    // One-shot recenter on first location fix: center camera and remove the temporary listener
                     positionListener = OnIndicatorPositionChangedListener { point: Point ->
                         getMapboxMap().setCamera(
                             CameraOptions.Builder()
@@ -808,17 +835,21 @@ private fun MapboxMapView(
                     }
                     positionListener?.let { location.addOnIndicatorPositionChangedListener(it) }
 
+                    // Continuous tracking listener: sends location (rate-limited), updates reserved distance, optional 'follow me'
                     trackingListener = OnIndicatorPositionChangedListener { point: Point ->
                         lastUserPoint = point
                         onUserPoint(point)
+                        // sending user's location max every 10s
                         maybeSendLocation(db, uid, point, lastSentMillis, minSendIntervalMs) {
                             lastSentMillis = it
                         }
+                        // if there are reserved spots, calculate distance and callback
                         reservedSpotState?.let { rs ->
                             val d = distanceMeters(point.latitude(), point.longitude(), rs.lat, rs.lng)
                             onDistanceUpdateForReserved(d)
                         }
 
+                        // local notification is the user is nearby reserved parking spot
                         maybeNotifyReservedSpotNearby(
                             context = context,
                             nm = NotificationManagerCompat.from(context),
@@ -830,6 +861,7 @@ private fun MapboxMapView(
                             notifiedIds = notifiedIds
                         )
 
+                        // move camera to the user and lock it in
                         if (followMe) {
                             mapView?.getMapboxMap()?.setCamera(
                                 CameraOptions.Builder()
@@ -841,12 +873,15 @@ private fun MapboxMapView(
                     }
                     trackingListener?.let { location.addOnIndicatorPositionChangedListener(it) }
 
+                    // Map click: find nearest filtered parking within 50m of click and select it
                     mapClickListener = OnMapClickListener { p: Point ->
+                        // On the click of the map, take the filtered parking lots (filter + userPoint) and find the nearest parking lot to the clicked point.
                         val eff = parkings.filter { filterState.matches(it, userPointState ?: lastUserPoint) }
                         val nearest = eff.minByOrNull { distanceMeters(p.latitude(), p.longitude(), it.lat, it.lng) }
                         if (nearest != null) {
                             val d = distanceMeters(p.latitude(), p.longitude(), nearest.lat, nearest.lng)
                             if (d <= 50.0) {
+                                // if the nearest one is ≤ 50 m from the click onParkingTapped(nearest), open the bottom card.
                                 onParkingTapped(nearest)
                                 true
                             } else false
@@ -854,6 +889,7 @@ private fun MapboxMapView(
                     }
                     mapClickListener?.let { getMapboxMap().addOnMapClickListener(it) }
 
+                    // User move gestures: disable 'follow me' and tell parent to show recenter button
                     moveListener = object : OnMoveListener {
                         override fun onMoveBegin(detector: MoveGestureDetector) {
                             followMe = false
@@ -868,6 +904,7 @@ private fun MapboxMapView(
         }
     )
 
+    // Focus camera to a requested target (from list 'Show on map')
     LaunchedEffect(focusTarget, mapView) {
         val ft = focusTarget ?: return@LaunchedEffect
         val mv = mapView ?: return@LaunchedEffect
@@ -881,6 +918,8 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
+
+    // Recenter camera to last known user location and enable 'follow me'
     LaunchedEffect(recenterSignal, mapView, lastUserPoint) {
         val mv = mapView ?: return@LaunchedEffect
         val p = lastUserPoint ?: return@LaunchedEffect
@@ -895,7 +934,10 @@ private fun MapboxMapView(
         } catch (_: Exception) {}
     }
 
+
+    // Firestore realtime subscription: load/patch 'parkings' and resolve author emails as needed
     DisposableEffect(Unit) {
+        // catching "parkings" from firebase and mapping them into "NearbyParking"
         parkingsReg = db.collection("parkings").addSnapshotListener { snap, _ ->
             val raw = snap?.documents?.mapNotNull { d ->
                 val lat = d.getDouble("lat") ?: return@mapNotNull null
@@ -909,9 +951,11 @@ private fun MapboxMapView(
                     lat = lat,
                     lng = lng,
                     createdBy = createdBy,
+                    //If the createdByEmail field does not exist but createdBy looks like an email, use it
                     createdByEmail = when {
                         !createdByEmailField.isNullOrBlank() -> createdByEmailField
                         createdBy.contains("@") -> createdBy
+                        // try to cache createdby it into an email
                         else -> authorEmailCache[createdBy] ?: ""
                     },
                     available = (d.getLong("availableSlots") ?: 0L),
@@ -919,11 +963,12 @@ private fun MapboxMapView(
                     pricePerHour = (d.getLong("pricePerHour") ?: 0L),
                     hasEv = d.getBoolean("hasEv") ?: false,
                     hasRamp = d.getBoolean("hasRamp") ?: false,
-                    isCovered = d.getBoolean("isCovered") ?: false,
                     createdAt = (d.getLong("createdAt") ?: 0L)
                 )
             } ?: emptyList()
 
+            // If there are "missing UIDs", add createdByEmail asynchronously,
+            // then push the enriched result to parkings and onParkingsChanged.
             val missingUids = raw.map { it.createdBy }
                 .filter { it.isNotBlank() && !it.contains("@") && authorEmailCache[it].isNullOrBlank() }
                 .distinct()
@@ -955,6 +1000,7 @@ private fun MapboxMapView(
         onDispose { parkingsReg?.remove(); parkingsReg = null }
     }
 
+    // Tie MapView lifecycle to the Compose lifecycle: start/stop/destroy + remove all listeners safely
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, mapView) {
         val observer = object : DefaultLifecycleObserver {
@@ -987,11 +1033,13 @@ private fun MapboxMapView(
         }
     }
 
+    // Keep geofence in sync when reservation changes
     LaunchedEffect(reservedSpotState) {
         updateReservedGeofence(reservedSpotState)
     }
 }
 
+// Utility: check if app currently has any location permission granted
 private fun hasLocationPermission(context: Context): Boolean {
     val fine = ContextCompat.checkSelfPermission(
         context, Manifest.permission.ACCESS_FINE_LOCATION
@@ -1002,6 +1050,7 @@ private fun hasLocationPermission(context: Context): Boolean {
     return fine || coarse
 }
 
+// Simple permission rationale UI with 'Allow' and 'Settings' actions
 @Composable
 private fun PermissionRationale(
     onRequest: () -> Unit,
@@ -1023,6 +1072,7 @@ private fun PermissionRationale(
     }
 }
 
+// Domain model for a parking item used on the map and in lists
 private data class NearbyParking(
     val id: String,
     val title: String,
@@ -1035,10 +1085,10 @@ private data class NearbyParking(
     val pricePerHour: Long,
     val hasEv: Boolean,
     val hasRamp: Boolean,
-    val isCovered: Boolean,
     val createdAt: Long
 )
 
+// Rate-limited location write to Firestore (locations/{uid}); calls onSent when stored
 private fun maybeSendLocation(
     db: FirebaseFirestore,
     uid: String?,
@@ -1060,6 +1110,7 @@ private fun maybeSendLocation(
         .addOnSuccessListener { onSent(now) }
 }
 
+// Local notification when user enters threshold distance to the reserved spot; deduped by notifiedIds
 private fun maybeNotifyReservedSpotNearby(
     context: Context,
     nm: NotificationManagerCompat,
@@ -1075,8 +1126,11 @@ private fun maybeNotifyReservedSpotNearby(
     val r = reserved ?: return
     val dist = distanceMeters(me.latitude(), me.longitude(), r.lat, r.lng)
     if (dist <= thresholdMeters) {
+        // creating unique key for that reservation
         val key = "reserved:${r.id}"
+        // the time when a notification was last sent for that key; if there is no record, take 0 (never).
         val last = notifiedIds[key] ?: 0L
+        // checking whether at least 120 seconds have passed since the last notification for that reservation.
         if (now - last >= 120_000L) {
             val title = "You’re close to your reserved spot"
             val text = "${r.title.ifBlank { "Parking" }} (~${dist.roundToInt()} m)"
@@ -1088,10 +1142,9 @@ private fun maybeNotifyReservedSpotNearby(
                 .setDefaults(NotificationCompat.DEFAULT_ALL)
                 .setAutoCancel(true)
                 .build()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
+            if (ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
             ) return
             nm.notify(key.hashCode(), notif)
             notifiedIds[key] = now
@@ -1099,6 +1152,7 @@ private fun maybeNotifyReservedSpotNearby(
     }
 }
 
+// Haversine distance (meters) between two lat/lon points
 private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val R = 6371000.0
     val dLat = Math.toRadians(lat2 - lat1)
@@ -1112,6 +1166,7 @@ private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Doubl
     return R * c
 }
 
+// BroadcastReceiver for geofence ENTER: shows a high-priority local notification when geofence is triggered
 class ReservedGeofenceReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val geofencingEvent = com.google.android.gms.location.GeofencingEvent.fromIntent(intent) ?: return
@@ -1125,22 +1180,18 @@ class ReservedGeofenceReceiver : BroadcastReceiver() {
         val title = parts.getOrNull(1)?.ifBlank { "Parking" } ?: "Parking"
 
         val channelId = "nearby_events"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(
-                channelId,
-                "Blizina (ParkUp)",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(ch)
-        }
+        val ch = NotificationChannel(
+            channelId,
+            "Blizina (ParkUp)",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(ch)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) return
-        }
+        if (ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return
 
         val notif = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)

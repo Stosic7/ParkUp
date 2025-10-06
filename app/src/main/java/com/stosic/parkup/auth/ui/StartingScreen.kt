@@ -54,7 +54,7 @@ fun StartingScreen(
             )
 
             Image(
-                painter = painterResource(id = R.drawable.car_parking), // tvoja slika auta
+                painter = painterResource(id = R.drawable.car_parking),
                 contentDescription = "Car Parking",
                 modifier = Modifier
                     .fillMaxWidth()

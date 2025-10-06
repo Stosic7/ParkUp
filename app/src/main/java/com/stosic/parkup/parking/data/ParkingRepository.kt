@@ -69,9 +69,14 @@ object ParkingRepository {
                     zone = zone
                 )
 
+                // create in in firebase.
                 doc.set(spot).await()
+
+                // add points ad parking count
                 AuthRepository.addPoints(uid, 10)
                 AuthRepository.incrementParkingCount(uid, 1)
+
+                // return the id of the parking
                 Result.success(doc.id)
             }
         } catch (e: Exception) {

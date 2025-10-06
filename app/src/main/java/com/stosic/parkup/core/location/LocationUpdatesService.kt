@@ -58,15 +58,13 @@ class LocationUpdatesService : Service() {
 
     private fun buildForegroundNotification(): Notification {
         val channelId = "parkup_loc_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(
-                channelId,
-                "Tracking location",
-                NotificationManager.IMPORTANCE_MIN
-            )
-            nm.createNotificationChannel(ch)
-        }
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val ch = NotificationChannel(
+            channelId,
+            "Tracking location",
+            NotificationManager.IMPORTANCE_MIN
+        )
+        nm.createNotificationChannel(ch)
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_stat_parking)
             .setContentTitle("ParkUp")

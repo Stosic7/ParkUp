@@ -18,7 +18,7 @@ object RankAutoUpdater {
     private var isUpdating = false
 
     fun start() {
-        stop() // safety: očisti prethodni listener
+        stop()
 
         val uid = auth.currentUser?.uid ?: run {
             Log.d(TAG, "start(): no user → skip.")
@@ -89,35 +89,5 @@ object RankAutoUpdater {
         reg = null
         lastSeenPoints = null
         isUpdating = false
-    }
-
-    fun updateNow() {
-        val uid = auth.currentUser?.uid ?: return
-        val meRef = db.collection("users").document(uid)
-        meRef.get()
-            .addOnSuccessListener { snap ->
-                if (snap == null || !snap.exists()) return@addOnSuccessListener
-
-                val pts = when (val p = snap.get("points")) {
-                    is Number -> p.toLong()
-                    is String -> p.toLongOrNull() ?: 0L
-                    else -> 0L
-                }
-                val q = db.collection("users").whereGreaterThan("points", pts)
-                q.count().get(AggregateSource.SERVER)
-                    .addOnSuccessListener { agg ->
-                        val newRank = (agg.count ?: 0L) + 1L
-                        val existingRank = when (val r = snap.get("rank")) {
-                            is Number -> r.toLong()
-                            is String -> r.toLongOrNull() ?: 0L
-                            else -> 0L
-                        }
-                        if (existingRank != newRank) {
-                            isUpdating = true
-                            meRef.update("rank", newRank)
-                                .addOnCompleteListener { isUpdating = false }
-                        }
-                    }
-            }
     }
 }

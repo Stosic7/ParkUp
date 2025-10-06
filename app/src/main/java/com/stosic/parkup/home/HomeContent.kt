@@ -1,4 +1,3 @@
-// FILE 2/2: HomeContent.kt
 package com.stosic.parkup.home
 
 import androidx.compose.animation.AnimatedVisibility
@@ -55,6 +54,7 @@ fun HomeContent(
     userData: Map<String, String>?,
     onLogout: () -> Unit
 ) {
+    // Local UI state: profile/leaderboard visibility, small trophy animation, UI lock, and animation state
     var showProfile by remember { mutableStateOf(false) }
     var showLeaderboard by remember { mutableStateOf(false) }
     var animateTrophy by remember { mutableStateOf(false) }
@@ -66,18 +66,28 @@ fun HomeContent(
         label = "trophy-press"
     )
 
-    // Firebase
+    // Firebase handles and search radius state (persisted per user)
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val uid = auth.currentUser?.uid
-
     var radiusEnabled by rememberSaveable { mutableStateOf(false) }
     var radiusMeters by rememberSaveable { mutableStateOf(500f) }
-
-    // Vidljivost radius bara (kontroliše ga HomeScreen)
     var showRadiusBar by rememberSaveable { mutableStateOf(true) }
 
-    // Učitaj searchRadius
+    // On first load of a logged-in user: read saved searchRadius from Firestore and apply to UI
+    LaunchedEffect(uid) {
+        if (uid != null) {
+            db.collection("users").document(uid).get().addOnSuccessListener { d ->
+                val r = d.getLong("searchRadius")?.toInt() ?: 0
+                if (r > 0) {
+                    radiusEnabled = true
+                    radiusMeters = r.toFloat()
+                }
+            }
+        }
+    }
+
+    // Persist search radius whenever the switch/slider changes (0 when disabled; clamped for safety)
     LaunchedEffect(uid) {
         if (uid != null) {
             db.collection("users").document(uid).get().addOnSuccessListener { d ->
@@ -97,10 +107,13 @@ fun HomeContent(
         }
     }
 
+    // Route to Leaderboard screen immediately when requested (and stop composing the rest of Home)
     if (showLeaderboard) {
         LeaderboardScreen(onBack = { showLeaderboard = false })
         return
     }
+
+    // Route to Profile screen immediately when requested (and stop composing the rest of Home)
     if (showProfile) {
         ProfileScreen(
             userEmail = userEmail,
@@ -112,8 +125,10 @@ fun HomeContent(
         return
     }
 
+    // Controls the bottom-sheet that shows the "all spots" table
     var showAllTable by remember { mutableStateOf(false) }
 
+    // Lightweight row model for the "all spots" table
     data class AllSpotRow(
         val id: String,
         val title: String,
@@ -124,9 +139,11 @@ fun HomeContent(
         val zone: String?
     )
 
+    // Live data and listener registration for "parkings" collection shown in the bottom-sheet
     var allSpots by remember { mutableStateOf<List<AllSpotRow>>(emptyList()) }
     var allSpotsReg by remember { mutableStateOf<ListenerRegistration?>(null) }
 
+    // Start/stop Firestore realtime listener only while the table sheet is open (saves resources)
     LaunchedEffect(showAllTable) {
         if (showAllTable) {
             allSpotsReg = db.collection("parkings")
@@ -135,9 +152,7 @@ fun HomeContent(
                         allSpots = qs.documents.map { doc ->
                             AllSpotRow(
                                 id = doc.id,
-                                title = doc.getString("title")
-                                    ?: doc.getString("name")
-                                    ?: "-",
+                                title = doc.getString("title") ?: "-",
                                 pricePerHour = doc.getLong("pricePerHour"),
                                 capacity = doc.getLong("capacity"),
                                 availableSlots = doc.getLong("availableSlots"),
@@ -153,6 +168,7 @@ fun HomeContent(
         }
     }
 
+    // Tiny vertical separator composable used in the table header/body
     @Composable
     fun VSep(color: Color) {
         Box(
@@ -163,8 +179,10 @@ fun HomeContent(
         )
     }
 
+    // Reusable grid line color for the table (slightly transparent outlineVariant)
     val gridLine = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
 
+    // Scaffold with a custom top bar (leaderboard, table, profile) and main content area
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -218,12 +236,14 @@ fun HomeContent(
             )
         }
     ) { padding ->
+        // Main column under the top bar; hosts the radius controls and the HomeScreen content
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
             // Radius bar
+            // Animated search radius panel: switch to enable, slider to choose distance (with enter/exit animations)
             AnimatedVisibility(
                 visible = showRadiusBar,
                 enter = fadeIn(tween(180)) + expandVertically(tween(220)),
@@ -249,6 +269,7 @@ fun HomeContent(
                 }
             }
 
+            // HomeScreen content wrapper; passes callbacks to hide the radius bar and lock UI when needed
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -263,16 +284,19 @@ fun HomeContent(
         }
     }
 
+    // Bottom sheet with a realtime table of all parking spots (only shown when requested)
     if (showAllTable) {
         ModalBottomSheet(
             onDismissRequest = { showAllTable = false },
             containerColor = MaterialTheme.colorScheme.surface
         ) {
+            // Header title for the sheet
             Text(
                 "All registered parking spots",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
+            // Table header row: column titles with a colored background and separators
             Column {
                 Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary)) {
                     Row(
@@ -298,6 +322,7 @@ fun HomeContent(
                 }
                 Divider(color = gridLine)
 
+                // Table body: realtime rows from Firestore; zebra background and grid separators
                 LazyColumn {
                     items(allSpots, key = { it.id }) { spot ->
                         val bg = if (allSpots.indexOf(spot) % 2 == 0)

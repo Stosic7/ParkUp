@@ -83,8 +83,8 @@ fun ParkingDetailsScreen(
     var hasActiveReservation by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val starColor = Color(0xFFFFC107)
 
+    // loading basic parking information (one-time)
     LaunchedEffect(parkingId) {
         val doc = db.collection("parkings").document(parkingId).get().await()
         capacity = doc.getLong("capacity")
@@ -99,6 +99,7 @@ fun ParkingDetailsScreen(
         isDisabledSpot = doc.getBoolean("disabledSpot")
     }
 
+    // catching author name and surname
     LaunchedEffect(createdBy) {
         val c = createdBy ?: return@LaunchedEffect
         val doc = db.collection("users").document(c).get().await()
@@ -107,6 +108,7 @@ fun ParkingDetailsScreen(
         creatorName = listOf(ime, prezime).filter { it.isNotBlank() }.joinToString(" ").ifBlank { c }
     }
 
+    // live catching ratings
     DisposableEffect(parkingId, uid) {
         val ratingsReg = db.collection("parkings").document(parkingId)
             .collection("ratings")
@@ -128,6 +130,7 @@ fun ParkingDetailsScreen(
     val authorPhotos = remember { mutableStateMapOf<String, String?>() }
     val myVotes = remember { mutableStateMapOf<String, String?>() }
 
+    // real-time comment list
     DisposableEffect(parkingId) {
         val reg = db.collection("parkings").document(parkingId)
             .collection("comments")
@@ -152,7 +155,7 @@ fun ParkingDetailsScreen(
             }
         onDispose { reg.remove() }
     }
-
+    // live status of my reservation on specific parking
     DisposableEffect(parkingId, uid) {
         var resReg: ListenerRegistration? = null
         if (uid != null) {
@@ -168,14 +171,8 @@ fun ParkingDetailsScreen(
 
     fun uriToBase64(uri: Uri, maxSize: Int = 1280, quality: Int = 85): String {
         val ctx = contextState.value
-        val bmp: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val bmp: Bitmap =
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, uri))
-        } else {
-            ctx.contentResolver.openInputStream(uri).use { input ->
-                requireNotNull(input)
-                BitmapFactory.decodeStream(input)
-            }
-        }
         val scale = minOf(maxSize / bmp.width.toFloat(), maxSize / bmp.height.toFloat(), 1f)
         val w = (bmp.width * scale).toInt().coerceAtLeast(1)
         val h = (bmp.height * scale).toInt().coerceAtLeast(1)

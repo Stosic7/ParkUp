@@ -7,6 +7,7 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import com.stosic.parkup.auth.data.AuthRepository
 
+// Firestore model for commenting
 data class ParkingComment(
     val id: String = "",
     val uid: String = "",
@@ -16,10 +17,12 @@ data class ParkingComment(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+// One "service" object for actions over the parking lot; centralizes Firebase calls
 object ParkingActions {
     private val db = FirebaseFirestore.getInstance()
     private val auth = FirebaseAuth.getInstance()
 
+    // Reserve a slot: atomically reduce availableSlots and write "active" reservation under users/{uid}/reservations/{parkingId}
     suspend fun reserveSpot(parkingId: String): Result<Unit> {
         return try {
             val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -30,12 +33,14 @@ object ParkingActions {
                 val available = (psnap.getLong("availableSlots") ?: 0L)
                 if (available <= 0L) throw IllegalStateException("No available parking spots.")
 
+                // Decrement availableSlots
                 if (!psnap.exists()) {
                     tr.set(pref, mapOf("availableSlots" to (available - 1L)), SetOptions.merge())
                 } else {
                     tr.update(pref, "availableSlots", available - 1L)
                 }
 
+                // Record the reservation under the user
                 val rref = db.collection("users").document(uid)
                     .collection("reservations").document(parkingId)
                 tr.set(
@@ -54,6 +59,7 @@ object ParkingActions {
         }
     }
 
+    // Completing the reservation: atomically increase availableSlots (up to 'capacity') and set the reservation status to "finished"
     suspend fun finishReservation(parkingId: String): Result<Unit> {
         return try {
             val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -61,6 +67,7 @@ object ParkingActions {
                 val pref = db.collection("parkings").document(parkingId)
                 val psnap = tr.get(pref)
 
+                // capacity + 1, not above the limit
                 val capacity = psnap.getLong("capacity") ?: Long.MAX_VALUE
                 val available = psnap.getLong("availableSlots") ?: 0L
                 val newAvailable = (available + 1L).coerceAtMost(capacity)
@@ -71,6 +78,7 @@ object ParkingActions {
                     tr.update(pref, "availableSlots", newAvailable)
                 }
 
+                // change from active to finished for the user
                 val rref = db.collection("users").document(uid)
                     .collection("reservations").document(parkingId)
                 tr.set(
@@ -89,6 +97,7 @@ object ParkingActions {
         }
     }
 
+    // Add a comment under parkings/{parkingId}/comments/{autoId}; returns the id of the comment
     suspend fun addComment(parkingId: String, text: String): Result<String> {
         return try {
             val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -102,6 +111,8 @@ object ParkingActions {
         }
     }
 
+    // Vote for a comment (like/dislike), save the user's vote in comments/{commentId}/votes/{uid} to prevent duplicate votes
+    // And you update the counters on the comment; the author gets +2 for likes, -1 for dislikes
     suspend fun voteComment(
         parkingId: String,
         commentId: String,
