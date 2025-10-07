@@ -80,6 +80,14 @@ import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 
+// --- Nearby users tracking (client-side) ---
+private data class NearbyUser(
+    val uid: String,
+    val name: String,
+    val lat: Double,
+    val lng: Double
+)
+
 // Parking filter model: holds all user-selected filter options and exposes isActive flag
 private data class ParkingFilter(
     val onlyAvailable: Boolean = false,
@@ -679,6 +687,12 @@ private fun MapboxMapView(
     val userPointState by rememberUpdatedState(userPointForFilter)
     val notificationChannelId = remember { "nearby_events" }
     val wantNotifPermission = true
+
+
+    var usersReg by remember { mutableStateOf<ListenerRegistration?>(null) }
+    val nearbyUsers = remember { mutableStateListOf<NearbyUser>() }
+    val notifiedNearbyUsers = remember { mutableStateMapOf<String, Long>() } // cooldown per-user
+
     var hasNotifPermission by remember {
         mutableStateOf(
             !wantNotifPermission || ContextCompat.checkSelfPermission(
@@ -849,7 +863,7 @@ private fun MapboxMapView(
                             onDistanceUpdateForReserved(d)
                         }
 
-                        // local notification is the user is nearby reserved parking spot
+                        // local notification if the user is nearby reserved parking spot
                         maybeNotifyReservedSpotNearby(
                             context = context,
                             nm = NotificationManagerCompat.from(context),
@@ -859,6 +873,18 @@ private fun MapboxMapView(
                             reserved = reservedSpotState,
                             thresholdMeters = proximityMeters,
                             notifiedIds = notifiedIds
+                        )
+
+                        // local notification if the user is nearby another user
+                        maybeNotifyNearbyUser(
+                            context = context,
+                            nm = NotificationManagerCompat.from(context),
+                            channelId = notificationChannelId,
+                            hasNotifPermission = hasNotifPermission,
+                            me = point,
+                            others = nearbyUsers,
+                            thresholdMeters = 150.0,       // ili promeni po želji
+                            notified = notifiedNearbyUsers  // per-user cooldown mapa
                         )
 
                         // move camera to the user and lock it in
@@ -999,6 +1025,33 @@ private fun MapboxMapView(
         }
         onDispose { parkingsReg?.remove(); parkingsReg = null }
     }
+
+    DisposableEffect(uid) {
+        usersReg?.remove(); usersReg = null
+        if (uid != null) {
+            usersReg = db.collection("users")
+                .addSnapshotListener { snap, _ ->
+                    val list = snap?.documents?.mapNotNull { d ->
+                        val otherUid = d.id
+                        if (otherUid == uid) return@mapNotNull null
+                        val lat = d.getDouble("lat") ?: return@mapNotNull null
+                        val lng = d.getDouble("lng") ?: return@mapNotNull null
+                        val name = listOf(
+                            (d.getString("ime") ?: "").trim(),
+                            (d.getString("prezime") ?: "").trim()
+                        ).filter { it.isNotBlank() }.joinToString(" ")
+                            .ifBlank { d.getString("displayName") ?: d.getString("name") ?: "user" }
+
+                        NearbyUser(uid = otherUid, name = name, lat = lat, lng = lng)
+                    }.orEmpty()
+
+                    nearbyUsers.clear()
+                    nearbyUsers.addAll(list)
+                }
+        }
+        onDispose { usersReg?.remove(); usersReg = null }
+    }
+
 
     // Tie MapView lifecycle to the Compose lifecycle: start/stop/destroy + remove all listeners safely
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1151,6 +1204,51 @@ private fun maybeNotifyReservedSpotNearby(
         }
     }
 }
+
+// Local notification if any other user is within threshold; de-duplicated by notified map (cooldown)
+private fun maybeNotifyNearbyUser(
+    context: Context,
+    nm: NotificationManagerCompat,
+    channelId: String,
+    hasNotifPermission: Boolean,
+    me: Point,
+    others: List<NearbyUser>,
+    thresholdMeters: Double,
+    notified: MutableMap<String, Long>,
+    cooldownMs: Long = 2 * 60 * 1000 // 2 min
+) {
+    if (!hasNotifPermission) return
+    val now = System.currentTimeMillis()
+
+    for (u in others) {
+        val dist = distanceMeters(me.latitude(), me.longitude(), u.lat, u.lng)
+        if (dist <= thresholdMeters) {
+            val key = "nearby_user:${u.uid}"
+            val last = notified[key] ?: 0L
+            if (now - last >= cooldownMs) {
+                val title = "User nearby: ${u.name}"
+                val body  = "About ${dist.roundToInt()} meters from you."
+                val notif = NotificationCompat.Builder(context, channelId)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .setAutoCancel(true)
+                    .build()
+
+                if (ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.POST_NOTIFICATIONS
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) return
+
+                nm.notify(key.hashCode(), notif)
+                notified[key] = now
+            }
+        }
+    }
+}
+
 
 // Haversine distance (meters) between two lat/lon points
 private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

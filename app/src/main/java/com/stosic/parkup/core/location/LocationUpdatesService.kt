@@ -33,10 +33,10 @@ class LocationUpdatesService : Service() {
         super.onCreate()
         client = LocationServices.getFusedLocationProviderClient(this)
         req = LocationRequest.Builder(
-            /* priority = */ Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-            /* intervalMillis = */ 60_000L // 60s
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY, // balanced, to save battery
+            60_000L // search for the new location every 60s
         )
-            .setMinUpdateDistanceMeters(25f) // 25 m
+            .setMinUpdateDistanceMeters(25f) // or when we surpass 25 m
             .setWaitForAccurateLocation(false)
             .build()
 
